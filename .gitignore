@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native build outputs
+android/.gradle/
+android/build/
+android/app/build/
+
+ios/build/
+ios/Pods/
+
+# Metro
+.metro-health-check*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+AGENTS.md
+CLAUDE.md
+
+# TypeScript
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+
+# Android signing keys
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+
+# Kotlin
+.kotlin/
+
+# Coverage
+coverage/
+
+# Temporary files
+*.orig.*
+*.tmp
+*.temp
+
+# Misc
+Thumbs.db
