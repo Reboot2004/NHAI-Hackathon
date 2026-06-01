@@ -128,10 +128,10 @@ export default function ScannerHUD({
       {challengePrompt && (
         <View style={styles.challengeBox}>
           <Text style={styles.challengeStep}>
-            Challenge {challengeIndex + 1} of {challengeTotal}
+            Satyapan Step {challengeIndex + 1} of {challengeTotal}
           </Text>
           <Text style={styles.challengeText}>
-            {challengeEmoji}  {challengePrompt}
+            {challengePrompt}
           </Text>
         </View>
       )}
@@ -147,11 +147,11 @@ export default function ScannerHUD({
       {/* Telemetry readout */}
       {livenessData && (
         <View style={styles.telemetry}>
-          <TelemetryItem label="EYE_OPEN" value={livenessData.eyeOpen.toFixed(2)} />
+          <TelemetryItem label="EYE" value={livenessData.eyeOpen.toFixed(2)} />
           <TelemetryItem label="SMILE" value={livenessData.smile.toFixed(2)} />
-          <TelemetryItem label="YAW°" value={livenessData.yaw.toFixed(1)} />
+          <TelemetryItem label="ANGLE" value={livenessData.yaw.toFixed(1)} />
           <TelemetryItem
-            label="ANTISPOOF"
+            label="LIVENESS"
             value={livenessData.antiSpoof.toFixed(2)}
             highlight={livenessData.antiSpoof > 0.8}
           />
@@ -188,12 +188,12 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
 
-  // Corner brackets
+  // Corner brackets - Government saffron accent
   bracket: {
     position: 'absolute',
     width: 24,
     height: 24,
-    borderColor: COLORS.cyan,
+    borderColor: '#ff9933',
   },
   bracketTL: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3 },
   bracketTR: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3 },
@@ -208,8 +208,8 @@ const styles = StyleSheet.create({
     width: '80%',
     height: '80%',
     borderRadius: RETICLE * 0.4,
-    borderWidth: 1,
-    borderColor: 'rgba(6,182,212,0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,153,51,0.3)',
   },
   innerRing: {
     position: 'absolute',
@@ -218,8 +218,8 @@ const styles = StyleSheet.create({
     width: '60%',
     height: '60%',
     borderRadius: RETICLE * 0.3,
-    borderWidth: 1.5,
-    borderColor: 'rgba(6,182,212,0.7)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,153,51,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -227,19 +227,19 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: COLORS.cyan,
+    backgroundColor: '#ff9933',
   },
   crossH: {
     position: 'absolute',
     width: '60%',
     height: 1,
-    backgroundColor: 'rgba(6,182,212,0.4)',
+    backgroundColor: 'rgba(255,153,51,0.3)',
   },
   crossV: {
     position: 'absolute',
     height: '60%',
     width: 1,
-    backgroundColor: 'rgba(6,182,212,0.4)',
+    backgroundColor: 'rgba(255,153,51,0.3)',
   },
 
   // Laser
@@ -247,9 +247,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     width: '100%',
-    height: 2,
-    backgroundColor: COLORS.cyan,
-    shadowColor: COLORS.cyan,
+    height: 2.5,
+    backgroundColor: '#ff9933',
+    shadowColor: '#ff9933',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 6,
@@ -268,12 +268,8 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 3,
-    backgroundColor: COLORS.cyanBright,
+    backgroundColor: '#ff9933',
     opacity: 0.9,
-    shadowColor: COLORS.cyan,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 4,
   },
 
   // Challenge overlay
@@ -282,27 +278,29 @@ const styles = StyleSheet.create({
     bottom: -80,
     left: -16,
     right: -16,
-    backgroundColor: 'rgba(6,182,212,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(6,182,212,0.4)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(11,60,93,0.92)',
+    borderWidth: 1.5,
+    borderColor: '#ff9933',
+    borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 14,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
   },
   challengeStep: {
-    fontSize: 9,
-    color: COLORS.textMuted,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    fontFamily: 'Courier New',
+    fontSize: 10,
+    color: '#cbd5e1',
+    fontWeight: '700',
   },
   challengeText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.cyanBright,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
     marginTop: 4,
-    letterSpacing: 1,
   },
 
   // Status bar
@@ -320,19 +318,21 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: COLORS.cyan,
+    backgroundColor: '#ff9933',
   },
   statusText: {
-    fontSize: 11,
-    color: COLORS.cyan,
-    fontFamily: 'Courier New',
-    letterSpacing: 0.5,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: {width: -1, height: 1},
+    textShadowRadius: 3,
   },
 
   // Telemetry
   telemetry: {
     position: 'absolute',
-    bottom: -160,
+    bottom: -164,
     left: 0,
     right: 0,
     flexDirection: 'row',
@@ -341,23 +341,22 @@ const styles = StyleSheet.create({
   },
   telemetryItem: {
     flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.8)',
-    borderWidth: 1,
-    borderColor: 'rgba(30,41,59,0.8)',
+    backgroundColor: 'rgba(11,60,93,0.9)',
+    borderWidth: 1.5,
+    borderColor: '#ff9933',
     borderRadius: 6,
     padding: 5,
+    alignItems: 'center',
   },
   telemetryLabel: {
-    fontSize: 7,
-    color: COLORS.textMuted,
-    letterSpacing: 0.5,
-    fontFamily: 'Courier New',
+    fontSize: 8,
+    color: '#cbd5e1',
+    fontWeight: '700',
   },
   telemetryValue: {
-    fontSize: 10,
-    color: COLORS.cyan,
-    fontWeight: '700',
-    fontFamily: 'Courier New',
+    fontSize: 11,
+    color: '#ffffff',
+    fontWeight: '800',
     marginTop: 1,
   },
 });

@@ -1,33 +1,47 @@
 /**
- * Design tokens — shared across all screens.
+ * NHAI Official UX4G Design Tokens
+ * Reconfigured from cyberpunk dark-theme to Indian Government official tricolor identity:
+ * Primary: Ashoka Navy Blue (#0b3c5d), Accent: Saffron (#ff9933), Secondary: Ashoka Green (#138808)
+ * Optimized for high-contrast accessibility (WCAG compliant) for field workers.
  */
 import { StyleSheet } from 'react-native';
 
 export const COLORS = {
-  bg: '#050811',
-  card: 'rgba(13,20,38,0.9)',
-  cardBorder: 'rgba(6,182,212,0.25)',
-  cyan: '#06b6d4',
-  cyanDim: 'rgba(6,182,212,0.15)',
-  cyanBright: '#67e8f9',
-  emerald: '#10b981',
-  emeraldDim: 'rgba(16,185,129,0.15)',
-  rose: '#f43f5e',
-  roseDim: 'rgba(244,63,94,0.15)',
-  amber: '#f59e0b',
-  amberDim: 'rgba(245,158,11,0.15)',
-  textPrimary: '#f1f5f9',
-  textSecondary: '#94a3b8',
-  textMuted: '#475569',
-  slate800: '#1e293b',
-  slate900: '#0f172a',
-  slate950: '#020617',
+  // Light Government theme backgrounds
+  bg: '#f1f5f9',               // Light background (slate-100)
+  card: '#ffffff',             // Solid white cards for accessibility
+  cardBorder: '#cbd5e1',       // Light border (slate-300)
+  
+  // Mapping existing variables to Tricolor system to prevent styling failures
+  cyan: '#0b3c5d',             // Ashoka Navy Blue (Official text/header accent)
+  cyanDim: 'rgba(11,60,93,0.08)', 
+  cyanBright: '#ff9933',       // NHAI Saffron (Primary action color)
+  
+  // Standard functional alerts (GIGW Compliant)
+  emerald: '#138808',          // Ashoka Green (Success / Verified)
+  emeraldDim: 'rgba(19,136,8,0.08)',
+  
+  rose: '#d32f2f',             // High-contrast accessibility Red (Error / Denied)
+  roseDim: 'rgba(211,47,47,0.08)',
+  
+  amber: '#ed6c02',            // High-contrast Orange/Amber (Warnings / Sync queues)
+  amberDim: 'rgba(237,108,2,0.08)',
+  
+  // High Legibility Text Contrast (WCAG 4.5:1 target)
+  textPrimary: '#0f172a',      // Deep slate-900 (near black) for all body copy
+  textSecondary: '#334155',    // Slate-700 for subtitles
+  textMuted: '#64748b',        // Slate-500 for captions
+  
+  // Gray adaptors to keep light theme consistent
+  slate800: '#cbd5e1',         // Slate-300 (used for light card borders)
+  slate900: '#f8fafc',         // Slate-50 (used for inputs background)
+  slate950: '#ffffff',         // Solid white
 };
 
 export const FONTS = {
-  hud: 'System',   // In production swap to Orbitron via expo-font
+  hud: 'System',   
   sans: 'System',
-  mono: 'Courier New',
+  mono: 'System',              // Bypassed monospace default to improve readability for laborers
 };
 
 export const T = StyleSheet.create({
@@ -42,38 +56,40 @@ export const T = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.cardBorder,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
   cardCyan: {
-    backgroundColor: COLORS.cyanDim,
+    backgroundColor: 'rgba(11,60,93,0.04)',
     borderWidth: 1,
     borderColor: COLORS.cyan,
     borderRadius: 12,
     padding: 12,
   },
 
-  // Typography
+  // Typography (Simplified for high readability)
   hudTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: COLORS.cyan,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   hudSubtitle: {
-    fontSize: 10,
+    fontSize: 11,
     color: COLORS.textSecondary,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    fontFamily: FONTS.mono,
+    letterSpacing: 0.5,
+    fontWeight: '600',
   },
   label: {
     fontSize: 11,
     color: COLORS.textMuted,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    fontFamily: FONTS.mono,
+    letterSpacing: 0.5,
+    fontWeight: '700',
   },
   bodyText: {
     fontSize: 13,
@@ -81,38 +97,36 @@ export const T = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Buttons
+  // Buttons (Thicker, solid layout for accessibility)
   btnCyan: {
-    backgroundColor: COLORS.cyanDim,
-    borderWidth: 1,
-    borderColor: COLORS.cyan,
-    borderRadius: 12,
+    backgroundColor: COLORS.cyan,
+    borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 20,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   btnCyanText: {
-    color: COLORS.cyanBright,
+    color: '#ffffff',
     fontWeight: '700',
-    fontSize: 12,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    fontFamily: FONTS.mono,
+    fontSize: 13,
+    letterSpacing: 0.5,
   },
   btnGhost: {
     borderWidth: 1,
-    borderColor: COLORS.slate800,
-    borderRadius: 12,
+    borderColor: COLORS.cyan,
+    borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 20,
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
   },
   btnGhostText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    fontFamily: FONTS.mono,
+    color: COLORS.cyan,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 
   // Status badges
@@ -120,7 +134,7 @@ export const T = StyleSheet.create({
     backgroundColor: COLORS.cyanDim,
     borderWidth: 1,
     borderColor: COLORS.cyan,
-    borderRadius: 20,
+    borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
@@ -128,7 +142,7 @@ export const T = StyleSheet.create({
     backgroundColor: COLORS.emeraldDim,
     borderWidth: 1,
     borderColor: COLORS.emerald,
-    borderRadius: 20,
+    borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
@@ -136,7 +150,7 @@ export const T = StyleSheet.create({
     backgroundColor: COLORS.roseDim,
     borderWidth: 1,
     borderColor: COLORS.rose,
-    borderRadius: 20,
+    borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
@@ -144,7 +158,7 @@ export const T = StyleSheet.create({
     backgroundColor: COLORS.amberDim,
     borderWidth: 1,
     borderColor: COLORS.amber,
-    borderRadius: 20,
+    borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },

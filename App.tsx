@@ -5,6 +5,7 @@ import { LocalSecureStorage } from './src/store/localDB';
 import type { EmployeeProfile } from './src/utils/faceMath';
 import type { AuthLog } from './src/store/localDB';
 import { COLORS } from './src/theme';
+import { Language } from './src/utils/translations';
 
 // Screens
 import WelcomeScreen from './src/screens/WelcomeScreen';
@@ -20,6 +21,7 @@ export default function App() {
   const [logs, setLogs] = useState<AuthLog[]>([]);
   const [networkOnline, setNetworkOnline] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [language, setLanguage] = useState<Language>('en');
 
   // Load database on start
   const loadDatabase = async () => {
@@ -69,6 +71,8 @@ export default function App() {
           networkOnline={networkOnline}
           pendingLogs={pendingLogsCount}
           enrolledCount={registry.length}
+          language={language}
+          onChangeLanguage={setLanguage}
         />
       )}
 
@@ -77,6 +81,7 @@ export default function App() {
           registry={registry}
           onBack={() => setScreen('WELCOME')}
           onLogAdded={refreshData}
+          language={language}
         />
       )}
 
@@ -84,6 +89,7 @@ export default function App() {
         <EnrollScreen
           onBack={() => setScreen('WELCOME')}
           onProfileAdded={refreshData}
+          language={language}
         />
       )}
 
@@ -95,6 +101,7 @@ export default function App() {
           onToggleNetwork={() => setNetworkOnline(p => !p)}
           onBack={() => setScreen('WELCOME')}
           onRefresh={refreshData}
+          language={language}
         />
       )}
     </View>

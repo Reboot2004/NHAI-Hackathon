@@ -42,7 +42,8 @@
         {
           "locationWhenInUsePermission": "Allow Datalake to access location for attendance logging"
         }
-      ]
+      ],
+      "expo-asset"
     ]
   }
 }

@@ -9,10 +9,10 @@ import {
   Alert,
   StatusBar,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, T } from '../theme';
 import { LocalSecureStorage } from '../store/localDB';
 import type { AuthLog } from '../store/localDB';
+import { Language, getTranslation } from '../utils/translations';
 
 interface Props {
   logs: AuthLog[];
@@ -21,6 +21,7 @@ interface Props {
   onToggleNetwork: () => void;
   onBack: () => void;
   onRefresh: () => void;
+  language: Language;
 }
 
 export default function DashboardScreen({
@@ -30,6 +31,7 @@ export default function DashboardScreen({
   onToggleNetwork,
   onBack,
   onRefresh,
+  language,
 }: Props) {
   const [consoleOutput, setConsoleOutput] = useState<string[]>([
     'System Initialized.',
@@ -115,16 +117,16 @@ export default function DashboardScreen({
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       
       {/* Top Bar */}
       <View style={s.topBar}>
         <TouchableOpacity onPress={onBack} style={s.backBtn}>
-          <Text style={s.backText}>← BACK</Text>
+          <Text style={s.backText}>{getTranslation(language, 'btnBack')}</Text>
         </TouchableOpacity>
-        <Text style={s.screenTitle}>SYSTEM DASHBOARD</Text>
+        <Text style={s.screenTitle}>{getTranslation(language, 'dbTitle')}</Text>
         <TouchableOpacity onPress={onRefresh} style={s.backBtn}>
-          <Text style={s.backText}>REFRESH ↻</Text>
+          <Text style={s.backText}>↻</Text>
         </TouchableOpacity>
       </View>
 
@@ -132,22 +134,22 @@ export default function DashboardScreen({
         
         {/* Network & Config Card */}
         <View style={T.card}>
-          <Text style={s.cardTitle}>Gateway Environment Configuration</Text>
+          <Text style={s.cardTitle}>{getTranslation(language, 'dbActionsSection')}</Text>
           
           <View style={s.rowBetween}>
             <View style={{ flex: 1 }}>
-              <Text style={s.fieldTitle}>Simulated Network Status</Text>
+              <Text style={s.fieldTitle}>{getTranslation(language, 'dbToggleNet')}</Text>
               <Text style={s.fieldSubtitle}>
                 {networkOnline 
-                  ? 'Active cellular / wifi link verified.' 
-                  : 'Zero-network environment. Local caching mode active.'}
+                  ? getTranslation(language, 'dbOnlineActive')
+                  : getTranslation(language, 'dbOfflineActive')}
               </Text>
             </View>
             <Switch
               value={networkOnline}
               onValueChange={onToggleNetwork}
-              trackColor={{ false: COLORS.slate800, true: 'rgba(6,182,212,0.4)' }}
-              thumbColor={networkOnline ? COLORS.cyan : COLORS.textMuted}
+              trackColor={{ false: '#cbd5e1', true: 'rgba(11,60,93,0.3)' }}
+              thumbColor={networkOnline ? COLORS.cyan : '#64748b'}
             />
           </View>
 
@@ -157,24 +159,24 @@ export default function DashboardScreen({
           <View style={s.statsRow}>
             <View style={s.statCol}>
               <Text style={s.statNum}>{enrolledCount}</Text>
-              <Text style={s.statLabel}>Enrolled Officers</Text>
+              <Text style={s.statLabel}>{getTranslation(language, 'enrolledCount', { count: '' }).trim()}</Text>
             </View>
             <View style={s.statCol}>
               <Text style={[s.statNum, pendingCount > 0 && { color: COLORS.amber }]}>{pendingCount}</Text>
-              <Text style={s.statLabel}>Pending Sync</Text>
+              <Text style={s.statLabel}>{getTranslation(language, 'pendingSync', { count: '' }).trim()}</Text>
             </View>
             <View style={s.statCol}>
-              <Text style={[s.statNum, { color: COLORS.textMuted }]}>{syncedCount}</Text>
-              <Text style={s.statLabel}>Cached Synced</Text>
+              <Text style={[s.statNum, { color: '#64748b' }]}>{syncedCount}</Text>
+              <Text style={s.statLabel}>SYNCED</Text>
             </View>
           </View>
         </View>
 
         {/* Sync Console Control Center */}
-        <View style={[T.card, { borderColor: 'rgba(6,182,212,0.1)' }]}>
-          <Text style={s.cardTitle}>AWS Synchronization Hub</Text>
+        <View style={T.card}>
+          <Text style={s.cardTitle}>{getTranslation(language, 'dbLogsSection')}</Text>
           <Text style={s.cardDesc}>
-            Deploy captured logs into the cloud. Use purge to zero out local files for absolute security.
+            {getTranslation(language, 'zeroNetworkDesc')}
           </Text>
 
           <View style={s.btnGrid}>
@@ -183,7 +185,7 @@ export default function DashboardScreen({
               onPress={handleSync}
               disabled={syncing}
             >
-              <Text style={s.btnSyncText}>☁ AWS LOGS SYNC</Text>
+              <Text style={s.btnSyncText}>☁ {getTranslation(language, 'dbForceSync')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -191,12 +193,12 @@ export default function DashboardScreen({
               onPress={handlePurge}
               disabled={purging}
             >
-              <Text style={s.btnPurgeText}>🗑 FLASH PURGE</Text>
+              <Text style={s.btnPurgeText}>🗑 {getTranslation(language, 'dbClearLogs')}</Text>
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity style={s.btnReset} onPress={handleReset}>
-            <Text style={s.btnResetText}>⚠️ RESET MASTER SECURE DATABASE</Text>
+            <Text style={s.btnResetText}>⚠️ {getTranslation(language, 'dbResetDB')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -204,7 +206,7 @@ export default function DashboardScreen({
         <View style={s.consoleCard}>
           <View style={s.consoleHeader}>
             <View style={s.consoleHeaderDot} />
-            <Text style={s.consoleHeaderTitle}>SYSTEM TERMINAL LOGS CONSOLE</Text>
+            <Text style={s.consoleHeaderTitle}>{getTranslation(language, 'dbSystemConsole')}</Text>
           </View>
           <ScrollView
             ref={consoleScrollRef}
@@ -222,10 +224,10 @@ export default function DashboardScreen({
 
         {/* Attendance Journals */}
         <View style={T.card}>
-          <Text style={s.cardTitle}>Biometric Attendance Journals ({logs.length})</Text>
+          <Text style={s.cardTitle}>{getTranslation(language, 'dbLogsSection')} ({logs.length})</Text>
           
           {logs.length === 0 ? (
-            <Text style={s.emptyText}>No attendance records verified yet.</Text>
+            <Text style={s.emptyText}>{getTranslation(language, 'dbLogsPlaceholder')}</Text>
           ) : (
             <View style={{ gap: 8, marginTop: 10 }}>
               {logs.map(log => (
@@ -261,7 +263,7 @@ export default function DashboardScreen({
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
+  root: { flex: 1, backgroundColor: '#f8fafc' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -269,109 +271,107 @@ const s = StyleSheet.create({
     paddingTop: 56,
     paddingHorizontal: 20,
     paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.slate800,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#cbd5e1',
+    elevation: 2,
   },
-  backBtn: { paddingVertical: 4, paddingHorizontal: 8 },
-  backText: { color: COLORS.cyan, fontSize: 11, fontFamily: 'Courier New', letterSpacing: 1 },
-  screenTitle: { fontSize: 12, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: 2 },
+  backBtn: { paddingVertical: 6, paddingHorizontal: 10 },
+  backText: { color: COLORS.cyan, fontSize: 13, fontWeight: '700' },
+  screenTitle: { fontSize: 13, fontWeight: '800', color: COLORS.textPrimary },
 
   scrollContainer: { padding: 20, gap: 20, paddingBottom: 60 },
 
   cardTitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
-    color: COLORS.cyanBright,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
+    color: COLORS.cyan,
     marginBottom: 8,
   },
-  cardDesc: { fontSize: 11, color: COLORS.textSecondary, lineHeight: 16, marginBottom: 16 },
+  cardDesc: { fontSize: 13, color: COLORS.textSecondary, lineHeight: 18, marginBottom: 16 },
 
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  fieldTitle: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
-  fieldSubtitle: { fontSize: 11, color: COLORS.textMuted, marginTop: 2, lineHeight: 15 },
+  fieldTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textPrimary },
+  fieldSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 17 },
 
-  divider: { height: 1, backgroundColor: COLORS.slate800, marginVertical: 14 },
+  divider: { height: 1.5, backgroundColor: '#cbd5e1', marginVertical: 14 },
 
   statsRow: { flexDirection: 'row', gap: 10 },
-  statCol: { flex: 1, alignItems: 'center', backgroundColor: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: 10 },
-  statNum: { fontSize: 20, fontWeight: '900', color: COLORS.cyanBright },
-  statLabel: { fontSize: 9, color: COLORS.textMuted, letterSpacing: 0.5, marginTop: 4, fontFamily: 'Courier New' },
+  statCol: { flex: 1, alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', padding: 10 },
+  statNum: { fontSize: 20, fontWeight: '900', color: COLORS.cyan },
+  statLabel: { fontSize: 10, color: COLORS.textSecondary, fontWeight: '700', marginTop: 4, textAlign: 'center' },
 
   btnGrid: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   btnSync: {
     flex: 1,
-    backgroundColor: 'rgba(6,182,212,0.12)',
-    borderWidth: 1,
-    borderColor: COLORS.cyan,
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: COLORS.cyan,
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
   },
-  btnSyncText: { fontSize: 10, fontWeight: '700', color: COLORS.cyanBright, letterSpacing: 1, fontFamily: 'Courier New' },
+  btnSyncText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
   
   btnPurge: {
     flex: 1,
-    backgroundColor: 'rgba(16,185,129,0.1)',
-    borderWidth: 1,
+    backgroundColor: 'rgba(19,136,8,0.1)',
+    borderWidth: 1.5,
     borderColor: COLORS.emerald,
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
   },
-  btnPurgeText: { fontSize: 10, fontWeight: '700', color: COLORS.emerald, letterSpacing: 1, fontFamily: 'Courier New' },
+  btnPurgeText: { fontSize: 12, fontWeight: '800', color: COLORS.emerald },
   
   btnDisabled: { opacity: 0.5 },
 
   btnReset: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(244,63,94,0.3)',
     backgroundColor: 'rgba(244,63,94,0.04)',
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
     marginTop: 6,
   },
-  btnResetText: { fontSize: 9, fontWeight: '700', color: COLORS.rose, letterSpacing: 1, fontFamily: 'Courier New' },
+  btnResetText: { fontSize: 11, fontWeight: '800', color: COLORS.rose },
 
   consoleCard: {
-    backgroundColor: '#02040a',
-    borderColor: 'rgba(6,182,212,0.2)',
-    borderWidth: 1,
-    borderRadius: 12,
+    backgroundColor: 'rgba(11,60,93,0.95)',
+    borderColor: '#ff9933',
+    borderWidth: 1.5,
+    borderRadius: 8,
     overflow: 'hidden',
   },
   consoleHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#080d1a',
+    backgroundColor: 'rgba(11,60,93,1)',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(6,182,212,0.15)',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#ff9933',
   },
   consoleHeaderDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.emerald },
-  consoleHeaderTitle: { fontSize: 8, fontWeight: '800', color: COLORS.textSecondary, letterSpacing: 1, fontFamily: 'Courier New' },
-  consoleScroll: { height: 120, padding: 10 },
+  consoleHeaderTitle: { fontSize: 9, fontWeight: '800', color: '#94a3b8', letterSpacing: 1 },
+  consoleScroll: { height: 100, padding: 10 },
   consoleContent: { paddingBottom: 10 },
-  consoleLine: { fontSize: 9, color: '#38bdf8', fontFamily: 'Courier New', lineHeight: 14, marginBottom: 4 },
+  consoleLine: { fontSize: 10, color: '#7dd3fc', lineHeight: 14, marginBottom: 4 },
 
-  emptyText: { fontSize: 12, color: COLORS.textMuted, textAlign: 'center', paddingVertical: 20 },
+  emptyText: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', paddingVertical: 20 },
   logItem: {
-    backgroundColor: 'rgba(15,23,42,0.6)',
-    borderWidth: 1,
-    borderColor: COLORS.slate800,
-    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
     padding: 12,
   },
-  logEmpName: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
-  logEmpId: { fontSize: 9, color: COLORS.textMuted, fontFamily: 'Courier New', marginTop: 1 },
+  logEmpName: { fontSize: 14, fontWeight: '800', color: COLORS.textPrimary },
+  logEmpId: { fontSize: 11, color: COLORS.textSecondary, fontWeight: '600', marginTop: 1 },
   logDetailRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  logMeta: { fontSize: 10, color: COLORS.textSecondary, fontFamily: 'Courier New' },
-  logTimestamp: { fontSize: 8, color: COLORS.textMuted, fontFamily: 'Courier New', marginTop: 4 },
+  logMeta: { fontSize: 11, color: COLORS.textSecondary, fontWeight: '600' },
+  logTimestamp: { fontSize: 10, color: COLORS.textSecondary, marginTop: 4 },
 
-  badgeTextAmber: { fontSize: 8, fontWeight: '800', color: COLORS.amber, letterSpacing: 0.5, fontFamily: 'Courier New' },
-  badgeTextCyan: { fontSize: 8, fontWeight: '800', color: COLORS.cyanBright, letterSpacing: 0.5, fontFamily: 'Courier New' },
+  badgeTextAmber: { fontSize: 9, fontWeight: '800', color: COLORS.amber },
+  badgeTextCyan: { fontSize: 9, fontWeight: '800', color: COLORS.cyan },
 });
