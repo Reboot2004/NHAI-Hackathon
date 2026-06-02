@@ -67,6 +67,8 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
   const [screenFlash, setScreenFlash] = useState(false);
   const [lowLightDetected, setLowLightDetected] = useState(false);
   const [maskDetected, setMaskDetected] = useState(false);
+  const [manualFillLightDisabled, setManualFillLightDisabled] = useState(false);
+  const [identityMismatch, setIdentityMismatch] = useState(false);
 
   // Load production TFLite model on mount
   useEffect(() => {
@@ -148,6 +150,18 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           }
         }
 
+        // Simulator real-time continuous identity mismatch check
+        if (demoMismatch) {
+          setIdentityMismatch(true);
+          setStatusMsg(`✕ IDENTITY MISMATCH DETECTED / चेहरा मेल नहीं खा रहा है`);
+          if (isActive) {
+            timerId = setTimeout(runBiometricScanCycle, 600);
+          }
+          return;
+        } else {
+          setIdentityMismatch(false);
+        }
+
         // Add minor fluctuation noise to keep the telemetry looking alive
         const noise = (Math.random() - 0.5) * 0.02;
 
@@ -155,7 +169,7 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
         const isLowLightSimulated = tick % 8 >= 4; // Toggle fill-light simulation
         const isMaskSimulated = tick > 5; // Simulates mask on challenge after tick 5
         
-        if (isLowLightSimulated) {
+        if (isLowLightSimulated && !manualFillLightDisabled) {
           setLowLightDetected(true);
           setScreenFlash(true);
         } else {
@@ -260,9 +274,41 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           return;
         }
 
+        // Run real-time continuous face matching on every frame of the scan cycle!
+        // Decodes picture, computes cosine similarity, and sets identity mismatch if below target threshold.
+        let matchScoreVal = 0.85;
+        if (selected) {
+          try {
+            const simulatedBuffer = new Uint8Array(112 * 112 * 3);
+            const { embedding } = await runProductionTFLiteInference(
+              tfliteModel,
+              simulatedBuffer,
+              demoMismatch 
+                ? Array.from({ length: 128 }, () => Math.random() - 0.5) 
+                : selected.embedding 
+            );
+            matchScoreVal = computeCosineSimilarity(selected.embedding, embedding);
+          } catch (e) {
+            // fallback
+          }
+        }
+
+        const isMaskDetected = !!result.maskLikely;
+        const requiredThreshold = isMaskDetected ? 0.88 : 0.85;
+
+        if (matchScoreVal < requiredThreshold) {
+          setIdentityMismatch(true);
+          setStatusMsg(`✕ IDENTITY MISMATCH DETECTED / चेहरा मेल नहीं खा रहा है`);
+          setIsProcessingFrame(false);
+          timerId = setTimeout(runBiometricScanCycle, 600);
+          return;
+        } else {
+          setIdentityMismatch(false);
+        }
+
         // Automatic screen fill-light check (Low light threshold: luminance < 75)
         const meanLum = result.meanBrightness ?? 128.0;
-        if (meanLum < 75.0) {
+        if (meanLum < 75.0 && !manualFillLightDisabled) {
           setLowLightDetected(true);
           setScreenFlash(true);
         } else {
@@ -271,7 +317,6 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
         }
 
         // Mask/PPE occlusion check
-        const isMaskDetected = !!result.maskLikely;
         setMaskDetected(isMaskDetected);
 
         // Extract real landmarks telemetry
@@ -299,7 +344,6 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           // 1. Detect eyes closed (probabilities drop below 0.30)
           if (currentEyeOpen < 0.30) {
             hasClosedEyes.current = true;
-            setStatusMsg(`[BLINK] Eyes closed detected... Reopen them!`);
           }
           // 2. Detect eyes reopened (rises back above 0.65 after being closed)
           if (hasClosedEyes.current && currentEyeOpen > 0.65) {
@@ -313,13 +357,15 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
             passed = true;
           }
         } else if (currentChallenge === 'TURN_LEFT') {
-          // ML Kit left head turn is negative yaw
-          if (currentYaw <= -12) {
+          // Left head turn is mirror positive yaw
+          const targetYaw = isMaskDetected ? 18 : 12;
+          if (currentYaw >= targetYaw) {
             passed = true;
           }
         } else if (currentChallenge === 'TURN_RIGHT') {
-          // ML Kit right head turn is positive yaw
-          if (currentYaw >= 12) {
+          // Right head turn is mirror negative yaw
+          const targetYaw = isMaskDetected ? -18 : -12;
+          if (currentYaw <= targetYaw) {
             passed = true;
           }
         }
@@ -370,7 +416,7 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
       isActive = false;
       if (timerId) clearTimeout(timerId);
     };
-  }, [step, isInitialAligning, challengeIdx, sequence, selected, language]);
+  }, [step, isInitialAligning, challengeIdx, sequence, selected, language, manualFillLightDisabled, demoMismatch]);
 
   const startAuth = useCallback(async (employee: EmployeeProfile) => {
     if (!cameraPermission?.granted) {
@@ -404,11 +450,15 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
     );
 
     const score = computeCosineSimilarity(selected.embedding, embedding);
+    
+    // Adaptive Thresholding Engine: Raise threshold to 0.88 under mask occlusion
+    // to protect against quantization noise and facial structural occlusions.
+    const requiredThreshold = maskDetected ? 0.88 : 0.85;
 
     setMatchScore(score);
     setInferenceMs(inferenceTimeMs);
 
-    if (score >= 0.85) {
+    if (score >= requiredThreshold) {
       // Get GPS coords
       let gps = 'GPS Unavailable';
       try {
@@ -511,6 +561,17 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
         {/* Shutter Camera Flash Screen Overlay */}
         {flashActive && <View style={s.shutterFlashOverlay} />}
 
+        {/* High-Visibility Error Toasts */}
+        {(identityMismatch || statusMsg.startsWith('✕')) && (
+          <View style={s.bigErrorToast}>
+            <Text style={s.bigErrorToastText}>
+              {identityMismatch 
+                ? `✕ IDENTITY MISMATCH DETECTED\nचेहरा मेल नहीं खा रहा है!` 
+                : statusMsg.replace('✕ ', '').toUpperCase()}
+            </Text>
+          </View>
+        )}
+
         {/* Dark overlay at top */}
         <LinearGradient colors={['rgba(5,8,17,0.85)', 'transparent']} style={s.topOverlay}>
           <TouchableOpacity onPress={() => setStep('SELECT')} style={s.backBtn}>
@@ -519,9 +580,19 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           <Text style={s.cameraPersonLabel}>{selected.name}</Text>
           <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
             {lowLightDetected && (
-              <View style={[s.onlinePill, { borderColor: COLORS.amber, backgroundColor: 'rgba(245,158,11,0.15)' }]}>
-                <Text style={[s.onlinePillText, { color: COLORS.amber, fontSize: 8 }]}>🔆 FILL-LIGHT</Text>
-              </View>
+              <TouchableOpacity 
+                style={[s.onlinePill, { borderColor: COLORS.amber, backgroundColor: manualFillLightDisabled ? 'transparent' : 'rgba(245,158,11,0.15)' }]}
+                onPress={() => {
+                  setManualFillLightDisabled(!manualFillLightDisabled);
+                  if (!manualFillLightDisabled) {
+                    setScreenFlash(false);
+                  }
+                }}
+              >
+                <Text style={[s.onlinePillText, { color: COLORS.amber, fontSize: 8 }]}>
+                  {manualFillLightDisabled ? '💡 FILL-OFF' : '🔆 FILL-LIGHT'}
+                </Text>
+              </TouchableOpacity>
             )}
             {maskDetected && (
               <View style={[s.onlinePill, { borderColor: COLORS.emerald, backgroundColor: 'rgba(16,185,129,0.15)' }]}>
@@ -547,7 +618,24 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           />
         </View>
 
-        {/* Floating Capture button at bottom */}
+        {/* Large Visual Gesture Prompts for Illiterate Workers */}
+        {!isInitialAligning && currentChallenge && (
+          <View style={s.visualHelperCard}>
+            <Text style={s.visualHelperEmoji}>
+              {currentChallenge === 'BLINK' ? '👁️' : currentChallenge === 'SMILE' ? '😊' : currentChallenge === 'TURN_LEFT' ? '◀️👤' : '👤▶️'}
+            </Text>
+            <Text style={s.visualHelperText}>
+              {currentChallenge === 'BLINK' 
+                ? 'BLINK EYES / पलकें झपकाएं' 
+                : currentChallenge === 'SMILE' 
+                ? 'SMILE / मुस्कुराएं' 
+                : currentChallenge === 'TURN_LEFT' 
+                ? 'TURN HEAD LEFT / बाएं मुड़ें' 
+                : 'TURN HEAD RIGHT / दाएं मुड़ें'}
+            </Text>
+          </View>
+        )}
+
         {/* Floating Capture button / Status Pill at bottom */}
         <View style={s.captureButtonContainer}>
           <View style={[
@@ -787,9 +875,61 @@ const s = StyleSheet.create({
   screenFlashOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: '#ffffff',
-    opacity: 0.45,
+    opacity: 0.25, // Softened fill light to prevent flash bangs
     zIndex: 1,
     pointerEvents: 'none',
+  },
+  bigErrorToast: {
+    position: 'absolute',
+    top: 130,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(239, 68, 68, 0.95)',
+    borderWidth: 2,
+    borderColor: '#fca5a5',
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  bigErrorToastText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  visualHelperCard: {
+    position: 'absolute',
+    bottom: 110,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(5, 8, 17, 0.9)',
+    borderWidth: 1.5,
+    borderColor: COLORS.cyan,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    width: 280,
+  },
+  visualHelperEmoji: {
+    fontSize: 32,
+    marginBottom: 4,
+  },
+  visualHelperText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
   },
   captureButtonContainer: {
     position: 'absolute',

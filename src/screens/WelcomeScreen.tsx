@@ -64,6 +64,18 @@ export default function WelcomeScreen({
             >
               <Text style={[styles.langBtnText, language === 'hi' && styles.langBtnTextActive]}>हिन्दी</Text>
             </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.langBtn, language === 'ta' && styles.langBtnActive]}
+              onPress={() => onChangeLanguage('ta')}
+            >
+              <Text style={[styles.langBtnText, language === 'ta' && styles.langBtnTextActive]}>தமிழ்</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.langBtn, language === 'te' && styles.langBtnActive]}
+              onPress={() => onChangeLanguage('te')}
+            >
+              <Text style={[styles.langBtnText, language === 'te' && styles.langBtnTextActive]}>తెలుగు</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -203,6 +215,7 @@ const styles = StyleSheet.create({
   langSelectorRow: {
     flexDirection: 'row',
     justifyContent: 'center',
+    flexWrap: 'wrap',
     gap: 12,
   },
   langBtn: {
