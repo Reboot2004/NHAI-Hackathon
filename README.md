@@ -120,18 +120,43 @@ $$\text{Similarity Score} = \cos(\theta) = \sum_{i=1}^{128} A_i \cdot B_i$$
 
 ---
 
-## 👁️ Multi-Challenge Active Liveness Engine
+## 👁️ Multi-Challenge Active Liveness Engine (Continuous Scanning Core)
 
-To completely defeat attendance fraud attempts utilizing printed photographs, tablet playbacks, or 3D masks, we developed an active liveness module. The engine guides workers through randomized physical movements that cannot be easily spoofed.
+To completely defeat attendance fraud attempts utilizing printed photographs, tablet playbacks, or 3D masks, we developed an automated, active liveness module. The engine processes frames at **5 Hz** in a continuous background loop to capture and evaluate physical movements without requiring manual capture buttons.
 
 ### The Liveness Challenges
 
 | Gesture | Neural/Keypoint Parameter | Threshold Boundary | Algorithmic Purpose |
 |---|---|---|---|
-| 👁️ **Eye Blink** | `leftEyeOpenProbability` & `rightEyeOpenProbability` | Dropping **$< 0.15$** on both eyes | Prevents static print photograph presentations |
-| 😊 **Smile** | `smilingProbability` | Rising **$> 0.75$** | Confirms voluntary muscular facial expansion |
-| ⬅️ **Turn Left** | Landmark Euler Yaw angle ($Y$) | **$> +25^\circ$** | Checks spatial depth and profile geometry changes |
-| ➡️ **Turn Right**| Landmark Euler Yaw angle ($Y$) | **$< -25^\circ$** | Checks spatial depth and profile geometry changes |
+| 👁️ **Eye Blink** | `leftEyeOpenProbability` & `rightEyeOpenProbability` | Dropping **$< 0.30$** on both eyes, then rising back **$> 0.65$** | Temporal check verifying dynamic eyelid occlusion (prevents static print spoofs) |
+| 😊 **Smile** | `smilingProbability` | Rising **$> 0.65$** | Confirms voluntary muscular facial expansion (bypassed in PPE/mask mode) |
+| ⬅️ **Turn Left** | Landmark Euler Yaw angle | **$\le -12^\circ$** | Checks spatial depth and profile geometry changes (negative yaw angle) |
+| ➡️ **Turn Right**| Landmark Euler Yaw angle | **$\ge 12^\circ$** | Checks spatial depth and profile geometry changes (positive yaw angle) |
+
+---
+
+### 🔆 Site-Hardened Verification Features
+
+#### 1. Fully Automated Continuous Scanning
+All manual shutter buttons have been removed from the enrollment and verification screens. The app runs a zero-latency frame evaluation loop. As soon as the user aligns their face inside the HUD reticle:
+* The active liveness sequence is triggered immediately.
+* Facial landmark probabilities are sampled continuously.
+* Once the challenges are passed, the final matching face frame is captured, processed, and evaluated against the database vector automatically.
+
+#### 2. Low-Light Screen Flash (Fill Light) Overlay
+In dark outdoor construction environments or night shifts, facial detection can fail. Datalake 3.0 implements dynamic luminance monitoring:
+* The native module calculates average image brightness ($Y = 0.299R + 0.587G + 0.114B$).
+* If the average luminance falls below **`75`**, a high-brightness white overlay (`screenFlashOverlay` with `opacity: 0.45`) is rendered on the screen.
+* The screen acts as a soft ring-light, bouncing light onto the user's face to recover landmark tracking. A glowing `🔆 FILL-LIGHT` badge is displayed on the HUD status bar.
+
+#### 3. Mask & Construction PPE Detection Mode
+Construction site workers routinely wear helmets, goggles, and dust/safety masks. If the mouth area is occluded by a mask, ML Kit returns `smileProbability = -1.0`:
+* The app detects this occlusion state and triggers `😷 PPE-MASK` mode.
+* The UI displays a green PPE badge, and the liveness sequencer **automatically bypasses the Smile gesture prompt**, verifying identity using head rotations and eye blinks.
+* This ensures high security without locking out workers wearing mandatory protective equipment.
+
+#### 4. Anti-Spoof Telemetry Calibration
+The active liveness score displayed in the scrolling telemetry logs starts strictly at **`0.00`**. As the worker successfully completes each gesture challenge in the sequence, the liveness score increments dynamically, reaching **`0.98`** when feature extraction is triggered.
 
 ---
 
@@ -249,6 +274,10 @@ cd android
 ```
 *   **Artifact Output**: The standalone installer APK is generated at:
     `android/app/build/outputs/apk/release/app-release.apk`
+*   **File Size Optimization**: The final standalone release binary has been compressed down to **`44.0 MB`** (down from a default unoptimized footprint of **`162.9 MB`**). This was achieved via:
+    *   **ABI Splitting & Target Filtering**: Configured Gradle to build exclusively for modern 64-bit ARM architectures (`reactNativeArchitectures=arm64-v8a`), stripping unused Intel (`x86`) and 32-bit (`armeabi-v7a`) compilation outputs.
+    *   **R8 / Proguard Code Minification**: Integrated full compilation-stage shrinking (`minifyEnabled true`) to prune unused Java bytecode and transitives.
+    *   **Resource Shrinking**: Enabled resource shrinking (`shrinkResources true`) to automatically strip unused image densities, layout files, and font variations.
 *   **Deployment**: This file can be distributed directly to field personnel, copied via USB, or hosted on NHAI’s private server for instant, zero-network installation and launch.
 
 #### Generate iOS Standalone IPA:
