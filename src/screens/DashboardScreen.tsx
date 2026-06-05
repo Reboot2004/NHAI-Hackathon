@@ -8,6 +8,7 @@ import {
   Switch,
   Alert,
   StatusBar,
+  Share,
 } from 'react-native';
 import { COLORS, T } from '../theme';
 import { LocalSecureStorage } from '../store/localDB';
@@ -18,7 +19,6 @@ interface Props {
   logs: AuthLog[];
   enrolledCount: number;
   networkOnline: boolean;
-  onToggleNetwork: () => void;
   onBack: () => void;
   onRefresh: () => void;
   language: Language;
@@ -28,7 +28,6 @@ export default function DashboardScreen({
   logs,
   enrolledCount,
   networkOnline,
-  onToggleNetwork,
   onBack,
   onRefresh,
   language,
@@ -53,58 +52,60 @@ export default function DashboardScreen({
     }, 50);
   }, [consoleOutput]);
 
-  const handleSync = async () => {
-    if (!networkOnline) {
-      Alert.alert('Network Offline', 'Simulated network is offline. Please toggle Network Online first.');
-      writeToConsole('SYNC ERR: Simulated gateway offline.');
+  useEffect(() => {
+    // Auto-run background sync & purge on mount when opening Dashboard
+    LocalSecureStorage.autoSyncAndPurge((msg) => {
+      writeToConsole(msg);
+    }).then(count => {
+      if (count > 0) {
+        onRefresh();
+      }
+    });
+  }, []);
+
+  const handleExportLogs = async () => {
+    if (logs.length === 0) {
+      Alert.alert(
+        'No Logs / कोई रिकॉर्ड नहीं',
+        'There are no attendance records to export. / निर्यात करने के लिए कोई रिकॉर्ड नहीं है।'
+      );
       return;
     }
 
-    setSyncing(true);
-    writeToConsole('Initiating AWS Sync Handshake...');
-    
-    try {
-      const count = await LocalSecureStorage.syncWithAWS((msg) => {
-        writeToConsole(msg);
-      });
-      writeToConsole(`Sync process complete. ${count} record(s) uploaded.`);
-      onRefresh();
-    } catch (err) {
-      writeToConsole('ERROR: AWS Synced handshakes interrupted.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handlePurge = async () => {
-    setPurging(true);
-    writeToConsole('Initiating flash purge cycle...');
+    writeToConsole('Compiling offline backup package (CSV)...');
 
     try {
-      const count = await LocalSecureStorage.purgeSynced((msg) => {
-        writeToConsole(msg);
+      const headers = 'ID,Employee ID,Employee Name,Timestamp,Liveness,Match Score,GPS,Device,Action\n';
+      const rows = logs.map(log => 
+        `"${log.id}","${log.employeeId}","${log.employeeName}","${log.timestamp}",${log.livenessPass},${log.matchScore}%,"${log.gpsCoords}","${log.deviceInfo}","${log.attendanceType}"`
+      ).join('\n');
+      
+      const csvContent = headers + rows;
+      const shareMessage = `NHAI Secure Attendance Offline Log Backup (CSV):\n\n${csvContent}`;
+
+      await Share.share({
+        title: 'NHAI Attendance Logs Backup',
+        message: shareMessage,
       });
-      writeToConsole(`Purge process complete. ${count} local record(s) wiped.`);
-      onRefresh();
-    } catch (err) {
-      writeToConsole('ERROR: Purge failure.');
-    } finally {
-      setPurging(false);
+      writeToConsole('SUCCESS: Backup shared/exported successfully.');
+    } catch (err: any) {
+      writeToConsole('ERROR: Backup export failed: ' + err.message);
+      Alert.alert('Export Failed / विफलता', 'Failed to share backup file. / बैकअप साझा करने में विफल।');
     }
   };
 
   const handleReset = () => {
     Alert.alert(
-      'Reset Local Secure Database',
-      'This will delete all custom enrolled profiles and delete all attendance logs. Registry will revert to default 4 employees. Are you sure?',
+      getTranslation(language, 'resetDbTitle'),
+      getTranslation(language, 'resetDbMsg'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: getTranslation(language, 'btnCancel'), style: 'cancel' },
         {
-          text: 'WIPE EVERYTHING',
+          text: getTranslation(language, 'wipeEverything'),
           style: 'destructive',
           onPress: async () => {
             await LocalSecureStorage.resetAll();
-            writeToConsole('WARNING: Master Database wiped. Reverting to default registry.');
+            writeToConsole('WARNING: Master Database wiped. Reverting to default empty registry.');
             onRefresh();
           },
         },
@@ -138,19 +139,18 @@ export default function DashboardScreen({
           
           <View style={s.rowBetween}>
             <View style={{ flex: 1 }}>
-              <Text style={s.fieldTitle}>{getTranslation(language, 'dbToggleNet')}</Text>
+              <Text style={s.fieldTitle}>{getTranslation(language, 'dbNetworkConnectivity')}</Text>
               <Text style={s.fieldSubtitle}>
                 {networkOnline 
                   ? getTranslation(language, 'dbOnlineActive')
                   : getTranslation(language, 'dbOfflineActive')}
               </Text>
             </View>
-            <Switch
-              value={networkOnline}
-              onValueChange={onToggleNetwork}
-              trackColor={{ false: '#cbd5e1', true: 'rgba(11,60,93,0.3)' }}
-              thumbColor={networkOnline ? COLORS.cyan : '#64748b'}
-            />
+            <View style={[T.badgeCyan, !networkOnline && T.badgeAmber, { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }]}>
+              <Text style={[!networkOnline ? s.badgeTextAmber : s.badgeTextCyan, { fontSize: 10, fontWeight: '800' }]}>
+                {networkOnline ? 'ONLINE' : 'OFFLINE'}
+              </Text>
+            </View>
           </View>
 
           <View style={s.divider} />
@@ -167,9 +167,13 @@ export default function DashboardScreen({
             </View>
             <View style={s.statCol}>
               <Text style={[s.statNum, { color: '#64748b' }]}>{syncedCount}</Text>
-              <Text style={s.statLabel}>SYNCED</Text>
+              <Text style={s.statLabel}>{getTranslation(language, 'statSynced')}</Text>
             </View>
           </View>
+          
+          <TouchableOpacity style={s.btnReset} onPress={handleReset}>
+            <Text style={s.btnResetText}>⚠️ {getTranslation(language, 'dbResetDB')}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Sync Console Control Center */}
@@ -179,26 +183,8 @@ export default function DashboardScreen({
             {getTranslation(language, 'zeroNetworkDesc')}
           </Text>
 
-          <View style={s.btnGrid}>
-            <TouchableOpacity 
-              style={[s.btnSync, syncing && s.btnDisabled]} 
-              onPress={handleSync}
-              disabled={syncing}
-            >
-              <Text style={s.btnSyncText}>☁ {getTranslation(language, 'dbForceSync')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[s.btnPurge, purging && s.btnDisabled]} 
-              onPress={handlePurge}
-              disabled={purging}
-            >
-              <Text style={s.btnPurgeText}>🗑 {getTranslation(language, 'dbClearLogs')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity style={s.btnReset} onPress={handleReset}>
-            <Text style={s.btnResetText}>⚠️ {getTranslation(language, 'dbResetDB')}</Text>
+          <TouchableOpacity style={s.btnExport} onPress={handleExportLogs}>
+            <Text style={s.btnExportText}>⚡ {getTranslation(language, 'btnExportBackup')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -234,7 +220,14 @@ export default function DashboardScreen({
                 <View key={log.id} style={s.logItem}>
                   <View style={s.rowBetween}>
                     <View>
-                      <Text style={s.logEmpName}>{log.employeeName}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={s.logEmpName}>{log.employeeName}</Text>
+                        <View style={[log.attendanceType === 'IN' ? T.badgeCyan : T.badgeAmber, { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }]}>
+                          <Text style={[log.attendanceType === 'IN' ? s.badgeTextCyan : s.badgeTextAmber, { fontSize: 8 }]}>
+                            {log.attendanceType === 'IN' ? 'IN' : 'OUT'}
+                          </Text>
+                        </View>
+                      </View>
                       <Text style={s.logEmpId}>{log.employeeId}</Text>
                     </View>
                     <View style={log.syncStatus === 'PENDING' ? T.badgeAmber : T.badgeCyan}>
@@ -245,11 +238,11 @@ export default function DashboardScreen({
                   </View>
                   
                   <View style={s.logDetailRow}>
-                    <Text style={s.logMeta}>Score: {log.matchScore}%</Text>
+                    <Text style={s.logMeta}>{getTranslation(language, 'matchLabel')}: {log.matchScore}%</Text>
                     <Text style={s.logMeta}>📍 {log.gpsCoords}</Text>
                   </View>
                   <Text style={s.logTimestamp}>
-                    Time: {new Date(log.timestamp).toLocaleString()}
+                    {getTranslation(language, 'statTime')}: {new Date(log.timestamp).toLocaleString()}
                   </Text>
                 </View>
               ))}
@@ -334,6 +327,17 @@ const s = StyleSheet.create({
     marginTop: 6,
   },
   btnResetText: { fontSize: 11, fontWeight: '800', color: COLORS.rose },
+
+  btnExport: {
+    borderWidth: 1.5,
+    borderColor: 'rgba(6,182,212,0.3)',
+    backgroundColor: 'rgba(6,182,212,0.06)',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  btnExportText: { fontSize: 11, fontWeight: '800', color: COLORS.cyan },
 
   consoleCard: {
     backgroundColor: 'rgba(11,60,93,0.95)',

@@ -1,5 +1,6 @@
 import { NativeModules } from 'react-native';
 import { preprocessFaceBuffer } from './imagePreprocessor';
+import { computeCosineSimilarity } from './faceMath';
 
 const { BiometricModule } = NativeModules;
 
@@ -13,6 +14,8 @@ export interface FaceAnalysisResult {
   roll: number;
   meanBrightness?: number;
   maskLikely?: boolean;
+  facePixels?: number[];
+  faceEmbedding?: number[];
   preprocessStats?: {
     meanBrightness: number;
     contrastRatio: number;
@@ -35,11 +38,11 @@ export function isNativeBiometricModuleAvailable(): boolean {
  * 
  * Falls back to simulator logic when running in standard Expo Go environments.
  */
-export async function analyzeFaceImage(imageUri: string): Promise<FaceAnalysisResult> {
+export async function analyzeFaceImage(imageUri: string, modelPath: string): Promise<FaceAnalysisResult> {
   if (isNativeBiometricModuleAvailable()) {
     try {
-      console.log(`[FaceAnalysis] Passing file URI to native ML Kit context: ${imageUri}`);
-      const result = await BiometricModule.analyzeFace(imageUri);
+      console.log(`[FaceAnalysis] Passing file URI to native ML Kit context: ${imageUri} with model: ${modelPath}`);
+      const result = await BiometricModule.analyzeFace(imageUri, modelPath);
       console.log('[FaceAnalysis] Native ML Kit telemetry:', result);
       return result;
     } catch (error) {
@@ -66,6 +69,13 @@ export async function analyzeFaceImage(imageUri: string): Promise<FaceAnalysisRe
 
   return new Promise((resolve) => {
     setTimeout(() => {
+      // Generate a mock normalized 128-D vector
+      const mockVector = Array.from({ length: 128 }, (_, i) => Math.sin(i * 0.31 + 1.7) * 0.4 + Math.cos(i * 0.17) * 0.3);
+      let sq = 0;
+      for (let i = 0; i < 128; i++) sq += mockVector[i] * mockVector[i];
+      const norm = Math.sqrt(sq) || 1.0;
+      const mockEmbedding = mockVector.map(v => v / norm);
+
       resolve({
         faceDetected: true,
         smileProbability: mockMask ? -1.0 : 0.85,
@@ -77,7 +87,70 @@ export async function analyzeFaceImage(imageUri: string): Promise<FaceAnalysisRe
         meanBrightness: mockBrightness,
         maskLikely: mockMask,
         preprocessStats: stats,
+        facePixels: Array.from({ length: 112 * 112 * 3 }, () => Math.round(Math.random() * 255)),
+        faceEmbedding: mockEmbedding,
       });
     }, 400);
   });
+}
+
+export async function verifyFaceAgainstProfile(
+  photoUri: string,
+  registeredEmbedding: number[],
+  modelPath: string,
+  similarityThreshold = 0.85
+): Promise<{
+  passed: boolean;
+  matchScore: number;
+  faceDetected: boolean;
+  livenessTelemetry: {
+    smileProbability: number;
+    leftEyeOpenProbability: number;
+    rightEyeOpenProbability: number;
+    yaw: number;
+    pitch: number;
+    roll: number;
+    maskLikely: boolean;
+    meanBrightness?: number;
+  };
+  faceEmbedding?: number[];
+}> {
+  const result = await analyzeFaceImage(photoUri, modelPath);
+  
+  if (!result.faceDetected || !result.faceEmbedding) {
+    return {
+      passed: false,
+      matchScore: 0,
+      faceDetected: false,
+      livenessTelemetry: {
+        smileProbability: -1,
+        leftEyeOpenProbability: -1,
+        rightEyeOpenProbability: -1,
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+        maskLikely: false,
+        meanBrightness: 128,
+      },
+    };
+  }
+
+  const score = computeCosineSimilarity(registeredEmbedding, result.faceEmbedding);
+
+  return {
+    passed: score >= similarityThreshold,
+    matchScore: parseFloat((score * 100).toFixed(1)),
+    faceDetected: true,
+    livenessTelemetry: {
+      smileProbability: result.smileProbability,
+      leftEyeOpenProbability: result.leftEyeOpenProbability,
+      rightEyeOpenProbability: result.rightEyeOpenProbability,
+      yaw: result.yaw,
+      pitch: result.pitch,
+      roll: result.roll,
+      maskLikely: !!result.maskLikely,
+      meanBrightness: result.meanBrightness,
+    },
+    faceEmbedding: result.faceEmbedding,
+  };
 }

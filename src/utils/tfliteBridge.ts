@@ -103,7 +103,6 @@ export async function loadProductionTFLiteModel(): Promise<any> {
 export async function runProductionTFLiteInference(
   modelInstance: any,
   rawFaceBuffer: Uint8Array,
-  baseEmbedding?: number[]
 ): Promise<TFLiteInferenceResult> {
   const t0 = Date.now();
 
@@ -111,47 +110,60 @@ export async function runProductionTFLiteInference(
   if (modelInstance && !modelInstance.isMockModel && typeof modelInstance.run === 'function') {
     try {
       const inputSize = 112 * 112 * 3;
-      // The fully-quantized INT8 TFLite model expects an INT8 typed input array
-      const quantizedInput = new Int8Array(inputSize);
-
+      // float32 NHWC input: normalize uint8 [0,255] -> float32 [-1,1]
+      const float32Input = new Float32Array(inputSize);
       for (let i = 0; i < inputSize; i++) {
-        // Map uint8 [0, 255] → int8 [−128, 127] (matches PyTorch training normalisation mapped to INT8)
-        quantizedInput[i] = rawFaceBuffer[i] - 128;
+        float32Input[i] = rawFaceBuffer[i] / 127.5 - 1.0;
       }
 
-      const outputs = await modelInstance.run([quantizedInput]);
+      const outputs = await modelInstance.run([float32Input]);
       const raw = Array.from(outputs[0]) as number[];
 
-      // L2-normalise onto unit hypersphere
+      // L2-normalise output onto unit hypersphere
       let sq = 0;
-      for (let i = 0; i < 128; i++) sq += raw[i] * raw[i];
+      for (const v of raw) sq += v * v;
       const norm = Math.sqrt(sq) || 1.0;
       const embedding = raw.map(v => v / norm);
 
+      console.log(`[MFN Bridge] JSI inference OK — embedding dims=${embedding.length}, norm=${norm.toFixed(4)}`);
       return { embedding, inferenceTimeMs: Date.now() - t0 };
     } catch (err) {
       console.error('[MFN Bridge] JSI inference failed, falling back to simulator:', err);
     }
   }
 
-  // ── JS simulator path (Expo Go) ────────────────────────────────────────────
+  // ── JS simulator path (Expo Go / dev builds without native module) ─────────
+  // IMPORTANT: This simulator derives the embedding from the ACTUAL pixel data
+  // so different people get different embeddings (no shared sine-wave baseline).
   return new Promise(resolve => {
     setTimeout(() => {
-      // Produce a 128-D vector in the same embedding space as the fine-tuned model
-      const raw = baseEmbedding
-        ? baseEmbedding.map(v => v + (Math.random() - 0.5) * 0.05)   // ±5 % noise
-        : Array.from({ length: 128 }, (_, i) => Math.sin(i * 0.31 + 1.7) * 0.4 + Math.cos(i * 0.17) * 0.3);
+      // Derive a deterministic seed from the pixel content (sample 64 pixels)
+      let seed = 0;
+      const step = Math.floor(rawFaceBuffer.length / 64);
+      for (let i = 0; i < rawFaceBuffer.length; i += step) {
+        seed = ((seed * 31) + rawFaceBuffer[i]) >>> 0;
+      }
+
+      // Produce a pseudo-random 128-D vector seeded by actual pixel content.
+      // Different faces → different pixel sums → different seeds → different vectors.
+      const raw: number[] = [];
+      let s = seed;
+      for (let i = 0; i < 128; i++) {
+        // Simple xorshift32
+        s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+        raw.push(((s >>> 0) / 0xFFFFFFFF) * 2 - 1);
+      }
 
       // L2-normalise
       let sq = 0;
-      for (let i = 0; i < 128; i++) sq += raw[i] * raw[i];
+      for (const v of raw) sq += v * v;
       const norm = Math.sqrt(sq) || 1.0;
       const embedding = raw.map(v => v / norm);
 
+      console.warn('[MFN Bridge] Using JS pixel-seeded simulator — install native module for real inference');
       resolve({
         embedding,
-        // Realistic latency for a 567 KB INT8 model on mid-range ARM CPU
-        inferenceTimeMs: Math.round(28 + Math.random() * 12),   // ~28–40 ms
+        inferenceTimeMs: Math.round(28 + Math.random() * 12),
       });
     }, 32);
   });
@@ -179,13 +191,15 @@ export async function verifyPersonnelIdentity(
   matchScore: number;
   inferenceTimeMs: number;
 }> {
+  // Run inference WITHOUT passing the stored embedding — the model must run
+  // independently on the live face, not derive output from the stored vector.
   const { embedding, inferenceTimeMs } = await runProductionTFLiteInference(
     modelInstance,
     rawFaceBuffer,
-    registeredProfileEmbedding
   );
 
   const score = computeCosineSimilarity(registeredProfileEmbedding, embedding);
+  console.log(`[MFN Bridge] Verification score=${score.toFixed(4)}, threshold=${similarityThreshold}`);
 
   return {
     passed: score >= similarityThreshold,

@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   StatusBar,
+  Image,
 } from 'react-native';
 import { COLORS } from '../theme';
 import { Language, getTranslation } from '../utils/translations';
@@ -81,9 +82,11 @@ export default function WelcomeScreen({
 
         {/* NHAI Stamp Seal Logo */}
         <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoSealText}>NHAI</Text>
-          </View>
+          <Image 
+            source={require('../../assets/nhai-logo.jpg')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
 
         {/* Title */}
@@ -163,7 +166,7 @@ export default function WelcomeScreen({
 
         {/* Footer */}
         <Text style={styles.footer}>
-          National Highways Authority of India (NHAI) · Offline Biometric Portal v3.0
+          {getTranslation(language, 'govFooter')}
         </Text>
       </ScrollView>
     </View>
@@ -239,17 +242,13 @@ const styles = StyleSheet.create({
   },
 
   logoArea: { alignItems: 'center', marginBottom: 20 },
-  logoCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 3, borderColor: COLORS.cyan,
+  logoImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.cyan,
     backgroundColor: '#ffffff',
-  },
-  logoSealText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: COLORS.cyan,
-    letterSpacing: 1,
   },
 
   title: {

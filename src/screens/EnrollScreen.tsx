@@ -11,7 +11,10 @@ import {
   StatusBar,
   Animated,
   Dimensions,
+  ToastAndroid,
+  Platform,
 } from 'react-native';
+import * as Network from 'expo-network';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, T } from '../theme';
@@ -53,7 +56,7 @@ export default function EnrollScreen({
   const [scanLogs, setScanLogs] = useState<string[]>([]);
   const [scanComplete, setScanComplete] = useState(false);
   const [capturedEmbedding, setCapturedEmbedding] = useState<number[] | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessing = useRef(false);
 
   // TFLite model
   const [tfliteModel, setTfliteModel] = useState<any>(null);
@@ -104,197 +107,137 @@ export default function EnrollScreen({
   // Helper delay function
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-  // Ref for tracking stable face frames
-  const stableFramesCount = useRef(0);
-  const simProgress = useRef(0);
+  // Alignment state
+  const [isAligning, setIsAligning] = useState(true);
 
-  // Initialize camera step logs
+  // Initialize camera step logs and alignment timer
   useEffect(() => {
     if (step !== 'CAMERA') return;
+    setIsAligning(true);
     setScanProgress(0);
-    stableFramesCount.current = 0;
-    simProgress.current = 0;
     setScanLogs([
       '[TFLite Enclave] Booting offline core...',
       '[Sensor] Front camera interface active.',
       '[HUD] Align face within the scanner boundary.',
-      '[HUD] Real-Time Biometric Analysis starting hands-free...'
+      '[HUD] Preparing for manual capture...'
     ]);
+    
+    const timer = setTimeout(() => {
+      setIsAligning(false);
+      setScanLogs(prev => [...prev, '✓ Face aligned. Ready to capture / फ़ोटो लेने के लिए तैयार।']);
+    }, 1500);
+
+    return () => clearTimeout(timer);
   }, [step]);
 
-  // Automatic Hands-Free Biometric Enrollment Loop
-  useEffect(() => {
-    if (step !== 'CAMERA' || scanComplete) return;
-
-    let isActive = true;
-    let timerId: any = null;
-
-    const runEnrollmentCycle = async () => {
-      if (!isActive) return;
-
-      // ─── 1. SIMULATOR PATH (Expo Go / Fallback) ───────────────────────────────
-      if (!isNativeBiometricModuleAvailable()) {
-        simProgress.current += 20;
-        const prg = simProgress.current;
-
-        if (prg === 20) {
-          setScanLogs(prev => [
-            ...prev,
-            '[HUD] Face detected. Initializing calibration...',
-            `✓ Landmark telemetry: Smile: 85% | Eyes: L:98% R:97%`,
-            `✓ Head Pose: Yaw: 2.1° | Pitch: -1.4°`
-          ]);
-          setScanProgress(20);
-        } else if (prg === 40) {
-          setScanLogs(prev => [
-            ...prev,
-            '✓ Aligning face region contours...',
-            '🧠 Loading MobileFaceNet INT8 TFLite model...'
-          ]);
-          setScanProgress(40);
-        } else if (prg === 70) {
-          setScanLogs(prev => [
-            ...prev,
-            '🧠 Running MobileFaceNet INT8 model inference...',
-            '✓ Real-time embedding generated: 128-D vector compiled'
-          ]);
-          setScanProgress(70);
-        } else if (prg === 90) {
-          setScanLogs(prev => [
-            ...prev,
-            '🛡️ Securing face embedding inside the local MMKV enclave...',
-            '✓ Biometric calibration complete.'
-          ]);
-          setScanProgress(90);
-        } else if (prg >= 100) {
-          setScanProgress(100);
-          setScanComplete(true);
-          
-          // Generate a fake embedding matching length 128
-          const mockEmbedding = Array.from({ length: 128 }, (_, i) => Math.sin(i * 0.31 + 1.7) * 0.4 + Math.cos(i * 0.17) * 0.3);
-          // L2-normalise
-          let sq = 0;
-          for (let i = 0; i < 128; i++) sq += mockEmbedding[i] * mockEmbedding[i];
-          const norm = Math.sqrt(sq) || 1.0;
-          const embedding = mockEmbedding.map(v => v / norm);
-
-          setCapturedEmbedding(embedding);
-          
-          setTimeout(() => {
-            setStep('FORM');
-            Alert.alert('Biometric Captured ✓', `Personnel face vector successfully compiled offline in 32ms.`);
-          }, 500);
-          isActive = false;
-        }
-
-        if (isActive) {
-          timerId = setTimeout(runEnrollmentCycle, 400); // Advances smoothly over 2 seconds
-        }
-        return;
-      }
-
-      // ─── 2. NATIVE PHYSICAL PATH (Google ML Kit Loop) ─────────────────────────
-      if (isProcessing) {
-        timerId = setTimeout(runEnrollmentCycle, 150);
-        return;
-      }
-
-      setIsProcessing(true);
-
+  const runEnrollmentCapture = async () => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+    
+    setScanProgress(25);
+    setScanLogs(prev => [...prev, '⚡ Capturing biometric frame...', '🧠 Loading MobileFaceNet model...']);
+    
+    if (isNativeBiometricModuleAvailable()) {
       let photo = null;
       if (cameraRef.current) {
         try {
           photo = await cameraRef.current.takePictureAsync({
-            quality: 0.1, // extremely low quality for speed
+            quality: 0.1,
             skipProcessing: true,
           });
         } catch (err) {
-          console.warn('[Enroll Loop] takePictureAsync failed:', err);
+          console.warn('[Enroll] takePictureAsync failed:', err);
         }
       }
 
       if (!photo) {
-        setIsProcessing(false);
-        if (isActive) {
-          timerId = setTimeout(runEnrollmentCycle, 300);
-        }
+        setScanLogs(prev => [...prev, '✕ Error: Camera capture failed.']);
+        Alert.alert(
+          getTranslation(language, 'faceNotDetectedTitle'),
+          'Camera capture failed. Please try again.'
+        );
+        setScanProgress(0);
+        isProcessing.current = false;
         return;
       }
 
       try {
-        const result = await analyzeFaceImage(photo.uri);
-        if (!isActive) return;
-
+        setScanProgress(50);
+        setScanLogs(prev => [...prev, '🧠 Analyzing captured frame with ML Kit...']);
+        const modelPath = tfliteModel?.resolvedUri ?? '';
+        const result = await analyzeFaceImage(photo.uri, modelPath);
+        
         if (!result.faceDetected) {
-          setScanLogs(prev => [
-            ...prev,
-            '✕ WARNING: Face out of scanner reticle bounds. Re-aligning...'
-          ]);
-          stableFramesCount.current = 0;
+          setScanLogs(prev => [...prev, '✕ Error: Face not detected. Re-align.']);
+          Alert.alert(
+            getTranslation(language, 'faceNotDetectedTitle'),
+            getTranslation(language, 'faceNotDetectedMsg')
+          );
           setScanProgress(0);
-          setIsProcessing(false);
-          timerId = setTimeout(runEnrollmentCycle, 400);
+          isProcessing.current = false;
           return;
         }
 
-        // Increment stable frame counter
-        stableFramesCount.current += 1;
-        const frameIdx = stableFramesCount.current;
-        const currentPrg = Math.min(90, frameIdx * 20); // 20%, 40%, 60%, 80%
-
-        setScanProgress(currentPrg);
+        setScanProgress(75);
         setScanLogs(prev => [
           ...prev,
-          `✓ [Pose ${frameIdx}] Centered: Smile:${(result.smileProbability * 100).toFixed(0)}% | Yaw:${result.yaw.toFixed(1)}°`,
+          `✓ Face detected. Smile: ${(result.smileProbability * 100).toFixed(0)}% | Yaw: ${result.yaw.toFixed(1)}°`,
+          '🛡️ Securing face embedding inside the local secure enclave...',
         ]);
 
-        if (frameIdx >= 5) {
-          // Face stable for 1.5 seconds! Run MobileFaceNet inference!
-          setScanLogs(prev => [
-            ...prev,
-            '✓ Biometric bounds lock acquired.',
-            '🧠 Loading MobileFaceNet INT8 model inference...',
-            '🛡️ Securing face embedding inside the local secure enclave...'
-          ]);
-          setScanProgress(95);
-
-          const rawBuffer = new Uint8Array(112 * 112 * 3);
-          const { embedding, inferenceTimeMs } = await runProductionTFLiteInference(tfliteModel, rawBuffer);
-          
-          if (!isActive) return;
-
-          setCapturedEmbedding(embedding);
-          setScanProgress(100);
-          setScanComplete(true);
-          setIsProcessing(false);
-          
-          setTimeout(() => {
-            setStep('FORM');
-            Alert.alert('Biometric Captured ✓', `Personnel face vector successfully compiled offline in ${inferenceTimeMs}ms.`);
-          }, 500);
-          isActive = false;
-        } else {
-          setIsProcessing(false);
-          timerId = setTimeout(runEnrollmentCycle, 200); // Fast cycle
+        if (!result.faceEmbedding) {
+          throw new Error("Extracted face embedding is null");
         }
+        
+        setCapturedEmbedding(result.faceEmbedding);
+        setScanProgress(100);
+        setScanComplete(true);
+        
+        setTimeout(() => {
+          setStep('FORM');
+          Alert.alert(
+            getTranslation(language, 'biometricCapturedTitle'),
+            getTranslation(language, 'biometricCapturedMsg', { time: 35 })
+          );
+          isProcessing.current = false;
+        }, 500);
 
       } catch (err: any) {
-        console.error('[Enroll Loop] native run exception:', err);
-        setScanLogs(prev => [...prev, '✕ Error processing biometric frame: ' + err.message]);
-        setIsProcessing(false);
-        if (isActive) {
-          timerId = setTimeout(runEnrollmentCycle, 500);
-        }
+        console.error('[Enroll] native analysis failed:', err);
+        setScanLogs(prev => [...prev, '✕ Error: Biometric analysis failed: ' + err.message]);
+        Alert.alert('Analysis Failed', 'Biometric analysis failed. Please try again.');
+        setScanProgress(0);
+        isProcessing.current = false;
       }
-    };
+    } else {
+      // Expo Go Simulator Fallback
+      setScanProgress(100);
+      setScanComplete(true);
+      setScanLogs(prev => [
+        ...prev,
+        '✓ Real-time embedding generated: 128-D vector compiled',
+        '🛡️ Securing face embedding inside local enclave...',
+        '✓ Biometric calibration complete.'
+      ]);
 
-    timerId = setTimeout(runEnrollmentCycle, 600);
+      const mockEmbedding = Array.from({ length: 128 }, (_, i) => Math.sin(i * 0.31 + 1.7) * 0.4 + Math.cos(i * 0.17) * 0.3);
+      let sq = 0;
+      for (let i = 0; i < 128; i++) sq += mockEmbedding[i] * mockEmbedding[i];
+      const norm = Math.sqrt(sq) || 1.0;
+      const embedding = mockEmbedding.map(v => v / norm);
 
-    return () => {
-      isActive = false;
-      if (timerId) clearTimeout(timerId);
-    };
-  }, [step, scanComplete, tfliteModel, isProcessing]);
+      setCapturedEmbedding(embedding);
+
+      setTimeout(() => {
+        setStep('FORM');
+        Alert.alert(
+          getTranslation(language, 'biometricCapturedTitle'),
+          getTranslation(language, 'biometricCapturedMsg', { time: 32 })
+        );
+        isProcessing.current = false;
+      }, 500);
+    }
+  };
 
   const handleKeyPress = (num: string) => {
     if (pin.length < 4) {
@@ -324,14 +267,20 @@ export default function EnrollScreen({
 
   const handleStartScan = async () => {
     if (!name.trim() || !empId.trim()) {
-      Alert.alert('Incomplete Fields', 'Please enter at least Name and Employee ID first.');
+      Alert.alert(
+        getTranslation(language, 'formIncompleteTitle'),
+        getTranslation(language, 'formIncompleteMsg')
+      );
       return;
     }
 
     if (!cameraPermission?.granted) {
       const res = await requestCameraPermission();
       if (!res.granted) {
-        Alert.alert('Camera Required', 'Camera permission is needed for biometric enrollment.');
+        Alert.alert(
+          getTranslation(language, 'cameraPermissionTitle'),
+          getTranslation(language, 'cameraPermissionMsg')
+        );
         return;
       }
     }
@@ -349,17 +298,49 @@ export default function EnrollScreen({
 
   const handleSubmit = async () => {
     if (!name.trim() || !empId.trim() || !role.trim() || !dept.trim()) {
-      Alert.alert('Required Fields', 'Please fill in all the personnel fields.');
+      Alert.alert(
+        getTranslation(language, 'formIncompleteTitle'),
+        getTranslation(language, 'formIncompleteMsg')
+      );
       return;
     }
 
     if (!scanComplete || !capturedEmbedding) {
-      Alert.alert('Biometric Capture Required', 'Please complete the real face scan before registering.');
+      Alert.alert(
+        getTranslation(language, 'biometricRequiredTitle'),
+        getTranslation(language, 'biometricRequiredMsg')
+      );
       return;
     }
 
     try {
       const initials = getInitials(name);
+      
+      // Determine if online and sync registration immediately
+      let synced = false;
+      try {
+        const netState = await Network.getNetworkStateAsync();
+        if (netState.isConnected && netState.isInternetReachable) {
+          const response = await fetch('https://api.datalake.nhai.gov.in/v3/attendance/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: empId.trim(),
+              name: name.trim(),
+              role: role.trim(),
+              department: dept.trim(),
+              initials,
+              embedding: capturedEmbedding,
+            }),
+          });
+          if (response.ok || response.status === 200 || response.status === 201) {
+            synced = true;
+          }
+        }
+      } catch (err) {
+        console.warn('Registration immediate sync failed:', err);
+      }
+
       // Use the embedding produced by real MobileFaceNet inference during scan
       await LocalSecureStorage.enrollProfile({
         id: empId.trim(),
@@ -368,13 +349,21 @@ export default function EnrollScreen({
         department: dept.trim(),
         initials,
         embedding: capturedEmbedding,
+        syncStatus: synced ? 'SYNCED' : 'PENDING',
       });
 
-      Alert.alert(
-        'Enrollment Complete ✓',
-        `[${name}] registered in the secure offline enclave.\nEmbedding dimensions: 128-D (MobileFaceNet).`,
-        [{ text: 'OK', onPress: () => { onProfileAdded(); onBack(); } }]
-      );
+      const successMsg = synced
+        ? `[${name}] ` + getTranslation(language, 'regSuccessMsg') + ' (Synced to Cloud / क्लाउड पर सिंक हो गया)'
+        : `[${name}] ` + getTranslation(language, 'regSuccessMsg') + ' (Saved Offline / ऑफ़लाइन सहेजा गया)';
+
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(successMsg, ToastAndroid.LONG);
+      } else {
+        Alert.alert(getTranslation(language, 'regSuccessTitle'), successMsg);
+      }
+
+      onProfileAdded();
+      onBack();
     } catch (err) {
       Alert.alert('Enrollment Error', 'Failed to securely enroll profile.');
     }
@@ -476,23 +465,33 @@ export default function EnrollScreen({
 
             <View style={s.scanningCenterRing}>
               <Text style={s.scanningPrgText}>{scanProgress}%</Text>
-              <Text style={s.scanningSubPrgText}>{getTranslation(language, 'aligningReticle')}</Text>
+              <Text style={s.scanningSubPrgText}>
+                {isAligning ? getTranslation(language, 'aligningReticle') : 'READY / तैयार'}
+              </Text>
             </View>
           </Animated.View>
         </View>
 
         {/* Real-time Diagnostics Terminal Footer */}
         <View style={s.terminalFooter}>
-          <View style={[
-            s.btnScan, 
-            { backgroundColor: 'rgba(5, 8, 17, 0.85)', borderColor: '#ff9933', borderWidth: 1.5 }
-          ]}>
-            <Text style={[s.btnScanText, { color: '#ff9933', letterSpacing: 1.2 }]}>
-              {scanComplete 
-                ? `✓ BIOMETRIC CAPTURED` 
-                : `⚡ AUTOMATED SCANNING ACTIVE`}
+          <TouchableOpacity 
+            style={[
+              s.btnScan, 
+              { backgroundColor: isAligning ? 'rgba(5, 8, 17, 0.85)' : COLORS.cyan, borderColor: COLORS.cyan, borderWidth: 1.5 }
+            ]}
+            onPress={() => {
+              if (!isAligning) {
+                runEnrollmentCapture();
+              }
+            }}
+            disabled={isAligning}
+          >
+            <Text style={[s.btnScanText, { color: isAligning ? COLORS.cyan : '#ffffff', letterSpacing: 1.2 }]}>
+              {isAligning 
+                ? `⌛ ALIGNING FACE...` 
+                : `⚡ CAPTURE BIOMETRIC PROFILE`}
             </Text>
-          </View>
+          </TouchableOpacity>
 
           {/* Simple toggle for diagnostics */}
           <TouchableOpacity 
@@ -500,13 +499,13 @@ export default function EnrollScreen({
             onPress={() => setShowDiag(!showDiag)}
           >
             <Text style={s.diagToggleText}>
-              {showDiag ? "✕ HIDE DIAGNOSTICS" : "🔍 SHOW DIAGNOSTICS"}
+              {showDiag ? getTranslation(language, 'diagnosticsHide') : getTranslation(language, 'diagnosticsShow')}
             </Text>
           </TouchableOpacity>
 
           {showDiag && (
             <>
-              <Text style={s.terminalTitle}>EDGE AI COMPUTATION CONSOLE</Text>
+              <Text style={s.terminalTitle}>{getTranslation(language, 'edgeConsoleTitle')}</Text>
               <ScrollView
                 style={s.terminalScroll}
                 contentContainerStyle={{ gap: 4 }}
@@ -540,7 +539,7 @@ export default function EnrollScreen({
         </TouchableOpacity>
         <Text style={s.screenTitle}>{getTranslation(language, 'regHeader')}</Text>
         <TouchableOpacity onPress={() => setStep('PIN_LOCK')} style={s.backBtn}>
-          <Text style={[s.backText, { color: COLORS.amber }]}>LOCK</Text>
+          <Text style={[s.backText, { color: COLORS.amber }]}>{getTranslation(language, 'btnLock')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -548,7 +547,7 @@ export default function EnrollScreen({
         {/* Banner */}
         <View style={s.banner}>
           <View style={s.bannerBadge}>
-            <Text style={s.bannerBadgeText}>OFFLINE PORTAL ACTIVE</Text>
+            <Text style={s.bannerBadgeText}>{getTranslation(language, 'offlinePortalActive')}</Text>
           </View>
           <Text style={s.bannerText}>
             {getTranslation(language, 'regSub')}

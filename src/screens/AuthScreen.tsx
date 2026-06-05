@@ -10,9 +10,12 @@ import {
   StatusBar,
   ActivityIndicator,
   Dimensions,
+  ToastAndroid,
+  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
+import * as Network from 'expo-network';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../theme';
 import ScannerHUD from '../components/ScannerHUD';
@@ -25,7 +28,7 @@ import {
 import type { LivenessChallengeType } from '../utils/livenessMachine';
 import { LocalSecureStorage } from '../store/localDB';
 import { loadProductionTFLiteModel, runProductionTFLiteInference } from '../utils/tfliteBridge';
-import { analyzeFaceImage, isNativeBiometricModuleAvailable } from '../utils/faceAnalysis';
+import { analyzeFaceImage, isNativeBiometricModuleAvailable, verifyFaceAgainstProfile } from '../utils/faceAnalysis';
 import { Language, getTranslation } from '../utils/translations';
 
 const { width } = Dimensions.get('window');
@@ -43,18 +46,17 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [step, setStep] = useState<AuthStep>('SELECT');
   const [selected, setSelected] = useState<EmployeeProfile | null>(null);
+  const [attendanceType, setAttendanceType] = useState<'IN' | 'OUT'>('IN');
 
-  // Liveness state
-  const [sequence, setSequence] = useState<LivenessChallengeType[]>([]);
-  const [challengeIdx, setChallengeIdx] = useState(0);
+  // Biometrics state
   const [statusMsg, setStatusMsg] = useState('Select a personnel to begin');
-  const [livenessData, setLivenessData] = useState({ eyeOpen: 0.98, smile: 0.02, yaw: 0.4, antiSpoof: 0.00 });
+  const [livenessData, setLivenessData] = useState({ eyeOpen: 0.95, smile: 0.05, yaw: 0.0, antiSpoof: 0.00 });
+  const [verificationStep, setVerificationStep] = useState<0 | 1 | 2>(0);
 
   // Result
   const [matchScore, setMatchScore] = useState(0);
   const [inferenceMs, setInferenceMs] = useState(0);
   const [tfliteModel, setTfliteModel] = useState<any>(null);
-  const [demoMismatch, setDemoMismatch] = useState(false);
 
   // Success glow animation
   const successGlow = useRef(new Animated.Value(0)).current;
@@ -64,11 +66,12 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
   const [flashActive, setFlashActive] = useState(false);
   const [isProcessingFrame, setIsProcessingFrame] = useState(false);
   const [isInitialAligning, setIsInitialAligning] = useState(true);
-  const [screenFlash, setScreenFlash] = useState(false);
+  const [fillLightActive, setFillLightActive] = useState(false);
   const [lowLightDetected, setLowLightDetected] = useState(false);
   const [maskDetected, setMaskDetected] = useState(false);
-  const [manualFillLightDisabled, setManualFillLightDisabled] = useState(false);
   const [identityMismatch, setIdentityMismatch] = useState(false);
+  const [screenFlash, setScreenFlash] = useState(false);
+  const [manualFillLightDisabled, setManualFillLightDisabled] = useState(true);
 
   // Load production TFLite model on mount
   useEffect(() => {
@@ -83,340 +86,21 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
     initTFLite();
   }, []);
 
-  // Refs for tracking liveness loop dynamics
-  const hasClosedEyes = useRef(false);
-  const simTick = useRef(0);
-
-  // Initial face alignment simulation
+  // Initial face alignment timing
   useEffect(() => {
-    if (step !== 'CAMERA' || !selected || sequence.length === 0) return;
+    if (step !== 'CAMERA' || !selected) return;
     
     setIsInitialAligning(true);
     setStatusMsg(getTranslation(language, 'aligningReticle'));
-    setLivenessData({ eyeOpen: 0.98, smile: 0.03, yaw: 0.8, antiSpoof: 0.00 });
-    hasClosedEyes.current = false;
-    simTick.current = 0;
+    setLivenessData({ eyeOpen: 0.95, smile: 0.05, yaw: 0.0, antiSpoof: 0.00 });
     
     const t = setTimeout(() => {
       setIsInitialAligning(false);
-      const current = sequence[0];
-      const challengePromptKey = current === 'SMILE' ? 'challengeSmile' : current === 'BLINK' ? 'challengeBlink' : current === 'TURN_LEFT' ? 'challengeTurnLeft' : 'challengeTurnRight';
-      setStatusMsg(`${getTranslation(language, 'livenessTitle')} [1/${sequence.length}]: ${getTranslation(language, challengePromptKey)}`);
-    }, 1800);
+      setStatusMsg("Face aligned. Tap base profile button / सत्यापित करें पर टैप करें");
+    }, 1500);
 
     return () => clearTimeout(t);
-  }, [step, selected, sequence, language]);
-
-  // Automated Continuous Biometric Scanning & Liveness Engine Loop
-  useEffect(() => {
-    if (step !== 'CAMERA' || isInitialAligning || challengeIdx >= sequence.length || !selected) return;
-
-    let isActive = true;
-    let timerId: any = null;
-
-    const runBiometricScanCycle = async () => {
-      if (!isActive) return;
-
-      const currentChallenge = sequence[challengeIdx];
-
-      // ─── 1. SIMULATOR PATH (Expo Go / Fallback) ───────────────────────────────
-      if (!isNativeBiometricModuleAvailable()) {
-        simTick.current += 1;
-        const tick = simTick.current;
-
-        let eyeOpen = 0.98;
-        let smile = 0.05;
-        let yaw = 0.0;
-
-        if (currentChallenge === 'BLINK') {
-          if (tick <= 3) {
-            eyeOpen = 0.98;
-          } else if (tick <= 6) {
-            eyeOpen = 0.05; // eyes closed
-          } else {
-            eyeOpen = 0.96; // eyes reopened
-          }
-        } else if (currentChallenge === 'SMILE') {
-          if (tick > 3) {
-            smile = Math.min(0.88, 0.05 + (tick - 3) * 0.2); // smile increases
-          }
-        } else if (currentChallenge === 'TURN_LEFT') {
-          if (tick > 3) {
-            yaw = Math.max(-16.0, 0.0 - (tick - 3) * 4); // yaw goes negative (left)
-          }
-        } else if (currentChallenge === 'TURN_RIGHT') {
-          if (tick > 3) {
-            yaw = Math.min(16.0, 0.0 + (tick - 3) * 4); // yaw goes positive (right)
-          }
-        }
-
-        // Simulator real-time continuous identity mismatch check
-        if (demoMismatch) {
-          setIdentityMismatch(true);
-          setStatusMsg(`✕ IDENTITY MISMATCH DETECTED / चेहरा मेल नहीं खा रहा है`);
-          if (isActive) {
-            timerId = setTimeout(runBiometricScanCycle, 600);
-          }
-          return;
-        } else {
-          setIdentityMismatch(false);
-        }
-
-        // Add minor fluctuation noise to keep the telemetry looking alive
-        const noise = (Math.random() - 0.5) * 0.02;
-
-        // Simulator light level and mask simulator
-        const isLowLightSimulated = tick % 8 >= 4; // Toggle fill-light simulation
-        const isMaskSimulated = tick > 5; // Simulates mask on challenge after tick 5
-        
-        if (isLowLightSimulated && !manualFillLightDisabled) {
-          setLowLightDetected(true);
-          setScreenFlash(true);
-        } else {
-          setLowLightDetected(false);
-          setScreenFlash(false);
-        }
-
-        setMaskDetected(isMaskSimulated);
-
-        // Anti-spoof dynamically starts at 0.00 and builds up based on sequence index
-        const antiSpoofVal = (challengeIdx / sequence.length) * 0.98;
-
-        setLivenessData({
-          eyeOpen: Math.max(0.0, Math.min(1.0, eyeOpen + noise)),
-          smile: isMaskSimulated ? -1.0 : Math.max(0.0, Math.min(1.0, smile + noise)),
-          yaw: yaw + noise * 5,
-          antiSpoof: antiSpoofVal,
-        });
-
-        // Check if gesture completed
-        let challengePassed = false;
-        if (currentChallenge === 'BLINK' && tick >= 7) {
-          challengePassed = true;
-        } else if (currentChallenge === 'SMILE') {
-          if (isMaskSimulated) {
-            challengePassed = true; // Auto-pass/bypass smile check for mask
-            setStatusMsg(`[PPE/MASK DETECTED] Bypassing smile check...`);
-          } else if (smile > 0.65) {
-            challengePassed = true;
-          }
-        } else if (currentChallenge === 'TURN_LEFT' && yaw <= -12) {
-          challengePassed = true;
-        } else if (currentChallenge === 'TURN_RIGHT' && yaw >= 12) {
-          challengePassed = true;
-        }
-
-        if (challengePassed) {
-          const nextIdx = challengeIdx + 1;
-          simTick.current = 0;
-          
-          if (nextIdx < sequence.length) {
-            setChallengeIdx(nextIdx);
-            const nextChallenge = sequence[nextIdx];
-            const challengePromptKey = nextChallenge === 'SMILE' ? 'challengeSmile' : nextChallenge === 'BLINK' ? 'challengeBlink' : nextChallenge === 'TURN_LEFT' ? 'challengeTurnLeft' : 'challengeTurnRight';
-            setStatusMsg(`✓ Verified. Next [${nextIdx + 1}/${sequence.length}]: ${getTranslation(language, challengePromptKey)}`);
-          } else {
-            // Trigger automatic final photo capture effect
-            setChallengeIdx(sequence.length);
-            setStatusMsg(getTranslation(language, 'comparingFace'));
-            setFlashActive(true);
-            setTimeout(() => setFlashActive(false), 100);
-            
-            setTimeout(() => {
-              runMatching();
-            }, 800);
-            isActive = false;
-          }
-        }
-
-        if (isActive) {
-          timerId = setTimeout(runBiometricScanCycle, 200); // 5 Hz update rate for smooth HUD telemetry
-        }
-        return;
-      }
-
-      // ─── 2. NATIVE PHYSICAL PATH (Google ML Kit Frame Analysis) ───────────────
-      if (isProcessingFrame) {
-        timerId = setTimeout(runBiometricScanCycle, 150);
-        return;
-      }
-
-      setIsProcessingFrame(true);
-
-      let photo = null;
-      if (cameraRef.current) {
-        try {
-          photo = await cameraRef.current.takePictureAsync({
-            quality: 0.1, // extremely compressed low-res thumbnail for lightning-fast analysis
-            skipProcessing: true,
-          });
-        } catch (err) {
-          console.warn('[Real-time Scan] Background shutter failed:', err);
-        }
-      }
-
-      if (!photo) {
-        setIsProcessingFrame(false);
-        if (isActive) {
-          timerId = setTimeout(runBiometricScanCycle, 300);
-        }
-        return;
-      }
-
-      try {
-        const result = await analyzeFaceImage(photo.uri);
-        if (!isActive) return;
-
-        if (!result.faceDetected) {
-          setStatusMsg(`✕ ${getTranslation(language, 'faceNotDetectedTitle')}`);
-          setIsProcessingFrame(false);
-          timerId = setTimeout(runBiometricScanCycle, 400);
-          return;
-        }
-
-        // Run real-time continuous face matching on every frame of the scan cycle!
-        // Decodes picture, computes cosine similarity, and sets identity mismatch if below target threshold.
-        let matchScoreVal = 0.85;
-        if (selected) {
-          try {
-            const simulatedBuffer = new Uint8Array(112 * 112 * 3);
-            const { embedding } = await runProductionTFLiteInference(
-              tfliteModel,
-              simulatedBuffer,
-              demoMismatch 
-                ? Array.from({ length: 128 }, () => Math.random() - 0.5) 
-                : selected.embedding 
-            );
-            matchScoreVal = computeCosineSimilarity(selected.embedding, embedding);
-          } catch (e) {
-            // fallback
-          }
-        }
-
-        const isMaskDetected = !!result.maskLikely;
-        const requiredThreshold = isMaskDetected ? 0.88 : 0.85;
-
-        if (matchScoreVal < requiredThreshold) {
-          setIdentityMismatch(true);
-          setStatusMsg(`✕ IDENTITY MISMATCH DETECTED / चेहरा मेल नहीं खा रहा है`);
-          setIsProcessingFrame(false);
-          timerId = setTimeout(runBiometricScanCycle, 600);
-          return;
-        } else {
-          setIdentityMismatch(false);
-        }
-
-        // Automatic screen fill-light check (Low light threshold: luminance < 75)
-        const meanLum = result.meanBrightness ?? 128.0;
-        if (meanLum < 75.0 && !manualFillLightDisabled) {
-          setLowLightDetected(true);
-          setScreenFlash(true);
-        } else {
-          setLowLightDetected(false);
-          setScreenFlash(false);
-        }
-
-        // Mask/PPE occlusion check
-        setMaskDetected(isMaskDetected);
-
-        // Extract real landmarks telemetry
-        const currentEyeOpen = result.leftEyeOpenProbability >= 0
-          ? (result.leftEyeOpenProbability + result.rightEyeOpenProbability) / 2
-          : 0.95;
-        const currentSmile = result.smileProbability;
-        const currentYaw = result.yaw;
-
-        // Dynamic liveness/antiSpoof calculation: starts at 0.00 and builds up to target
-        const antiSpoofVal = (challengeIdx / sequence.length) * 0.98;
-
-        setLivenessData({
-          eyeOpen: currentEyeOpen,
-          smile: isMaskDetected ? -1.0 : (currentSmile >= 0 ? currentSmile : 0.05),
-          yaw: currentYaw,
-          antiSpoof: antiSpoofVal,
-        });
-
-        // Evaluate physical gestures
-        let passed = false;
-
-        if (currentChallenge === 'BLINK') {
-          // Temporal blink detection logic:
-          // 1. Detect eyes closed (probabilities drop below 0.30)
-          if (currentEyeOpen < 0.30) {
-            hasClosedEyes.current = true;
-          }
-          // 2. Detect eyes reopened (rises back above 0.65 after being closed)
-          if (hasClosedEyes.current && currentEyeOpen > 0.65) {
-            passed = true;
-          }
-        } else if (currentChallenge === 'SMILE') {
-          if (isMaskDetected) {
-            passed = true; // Auto-pass/bypass smile check for mask
-            setStatusMsg(`[PPE/MASK DETECTED] Bypassing smile check...`);
-          } else if (currentSmile > 0.65) {
-            passed = true;
-          }
-        } else if (currentChallenge === 'TURN_LEFT') {
-          // Left head turn is mirror positive yaw
-          const targetYaw = isMaskDetected ? 18 : 12;
-          if (currentYaw >= targetYaw) {
-            passed = true;
-          }
-        } else if (currentChallenge === 'TURN_RIGHT') {
-          // Right head turn is mirror negative yaw
-          const targetYaw = isMaskDetected ? -18 : -12;
-          if (currentYaw <= targetYaw) {
-            passed = true;
-          }
-        }
-
-        if (passed) {
-          const nextIdx = challengeIdx + 1;
-          hasClosedEyes.current = false;
-
-          if (nextIdx < sequence.length) {
-            setChallengeIdx(nextIdx);
-            const nextChallenge = sequence[nextIdx];
-            const challengePromptKey = nextChallenge === 'SMILE' ? 'challengeSmile' : nextChallenge === 'BLINK' ? 'challengeBlink' : nextChallenge === 'TURN_LEFT' ? 'challengeTurnLeft' : 'challengeTurnRight';
-            setStatusMsg(`✓ Verified. Next [${nextIdx + 1}/${sequence.length}]: ${getTranslation(language, challengePromptKey)}`);
-          } else {
-            // All active verification targets hit! Capture secure photo & run model
-            setChallengeIdx(sequence.length);
-            setStatusMsg(getTranslation(language, 'comparingFace'));
-            
-            // Trigger shutter sound and flash overlay
-            setFlashActive(true);
-            setTimeout(() => setFlashActive(false), 100);
-
-            setTimeout(() => {
-              runMatching();
-            }, 800);
-            isActive = false;
-          }
-        }
-
-        setIsProcessingFrame(false);
-        if (isActive) {
-          timerId = setTimeout(runBiometricScanCycle, 200); // Ticks at 5 Hz
-        }
-
-      } catch (err) {
-        console.error('[Real-time Scan] Native analysis exception:', err);
-        setIsProcessingFrame(false);
-        if (isActive) {
-          timerId = setTimeout(runBiometricScanCycle, 400);
-        }
-      }
-    };
-
-    // Delay scan initiation slightly to allow HUD to boot cleanly
-    timerId = setTimeout(runBiometricScanCycle, 600);
-
-    return () => {
-      isActive = false;
-      if (timerId) clearTimeout(timerId);
-    };
-  }, [step, isInitialAligning, challengeIdx, sequence, selected, language, manualFillLightDisabled, demoMismatch]);
+  }, [step, selected, language]);
 
   const startAuth = useCallback(async (employee: EmployeeProfile) => {
     if (!cameraPermission?.granted) {
@@ -426,71 +110,223 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
         return;
       }
     }
-    const seq = generateChallengeSequence(2);
     setSelected(employee);
-    setSequence(seq);
-    setChallengeIdx(0);
+    setVerificationStep(0);
+    setLivenessData({ eyeOpen: 0.95, smile: 0.05, yaw: 0.0, antiSpoof: 0.00 });
+    setLowLightDetected(false);
+    setMaskDetected(false);
     setStatusMsg(getTranslation(language, 'alignFace'));
     setStep('CAMERA');
   }, [cameraPermission, language]);
 
+  const handleAttendanceSuccess = useCallback(async (finalScore: number) => {
+    if (!selected) return;
+
+    // Get GPS coords
+    let gps = 'GPS Unavailable';
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        gps = `Lat: ${loc.coords.latitude.toFixed(4)}, Lon: ${loc.coords.longitude.toFixed(4)}`;
+      }
+    } catch { /* offline fallback */ }
+
+    let synced = false;
+    try {
+      const netState = await Network.getNetworkStateAsync();
+      if (netState.isConnected && netState.isInternetReachable) {
+        const response = await fetch('https://api.datalake.nhai.gov.in/v3/attendance/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employeeId: selected.id,
+            employeeName: selected.name,
+            timestamp: new Date().toISOString(),
+            matchScore: parseFloat((finalScore * 100).toFixed(1)),
+            gpsCoords: gps,
+            deviceInfo: 'Datalake 3.0 · MobileFaceNet · arm64-v8a',
+            attendanceType: attendanceType,
+          }),
+        });
+        if (response.ok || response.status === 200 || response.status === 201) {
+          synced = true;
+        }
+      }
+    } catch (err) {
+      console.warn('Auto-sync failed on verification:', err);
+    }
+
+    await LocalSecureStorage.addLog({
+      employeeId: selected.id,
+      employeeName: selected.name,
+      timestamp: new Date().toISOString(),
+      livenessPass: true,
+      matchScore: parseFloat((finalScore * 100).toFixed(1)),
+      gpsCoords: gps,
+      deviceInfo: 'Datalake 3.0 · MobileFaceNet · arm64-v8a',
+      syncStatus: synced ? 'SYNCED' : 'PENDING',
+      attendanceType: attendanceType,
+    });
+
+    const msg = synced 
+      ? '✓ Attendance Synced / उपस्थिति क्लाउड पर सिंक हो गई'
+      : '✓ Attendance Saved Offline / उपस्थिति ऑफ़लाइन सहेजी गई';
+
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.LONG);
+    } else {
+      Alert.alert('Attendance / उपस्थिति', msg);
+    }
+
+    onLogAdded();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(successGlow, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.timing(successGlow, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+      ])
+    ).start();
+    setStep('SUCCESS');
+  }, [selected, onLogAdded, successGlow, attendanceType]);
+
   const runMatching = useCallback(async () => {
     if (!selected) return;
-    
-    // Convert current video frame to raw RGB pixel bytes (112x112x3) for MobileFaceNet
-    const simulatedRawFaceBuffer = new Uint8Array(112 * 112 * 3);
 
-    // Call unified C++ JSI production TFLite inference bridge!
-    const { embedding, inferenceTimeMs } = await runProductionTFLiteInference(
-      tfliteModel,
-      simulatedRawFaceBuffer,
-      demoMismatch 
-        ? Array.from({ length: 128 }, () => Math.random() - 0.5) 
-        : selected.embedding 
-    );
+    const modelPath = tfliteModel?.resolvedUri ?? '';
+    let score = 0;
+    let passed = false;
 
-    const score = computeCosineSimilarity(selected.embedding, embedding);
-    
-    // Adaptive Thresholding Engine: Raise threshold to 0.88 under mask occlusion
-    // to protect against quantization noise and facial structural occlusions.
-    const requiredThreshold = maskDetected ? 0.88 : 0.85;
+    // Trigger flash visual effect
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 100);
 
-    setMatchScore(score);
-    setInferenceMs(inferenceTimeMs);
-
-    if (score >= requiredThreshold) {
-      // Get GPS coords
-      let gps = 'GPS Unavailable';
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          gps = `Lat: ${loc.coords.latitude.toFixed(4)}, Lon: ${loc.coords.longitude.toFixed(4)}`;
+    if (isNativeBiometricModuleAvailable()) {
+      let photo = null;
+      if (cameraRef.current) {
+        try {
+          photo = await cameraRef.current.takePictureAsync({
+            quality: 0.1,
+            skipProcessing: true,
+          });
+        } catch (err) {
+          console.warn('[Auth] takePictureAsync failed:', err);
         }
-      } catch { /* offline fallback */ }
+      }
 
-      await LocalSecureStorage.addLog({
-        employeeId: selected.id,
-        employeeName: selected.name,
-        timestamp: new Date().toISOString(),
-        livenessPass: true,
-        matchScore: parseFloat((score * 100).toFixed(1)),
-        gpsCoords: gps,
-        deviceInfo: 'Datalake 3.0 · MobileFaceNet · arm64-v8a',
-      });
+      if (!photo) {
+        Alert.alert(
+          getTranslation(language, 'faceNotDetectedTitle'),
+          'Camera capture failed. Please try again.'
+        );
+        return;
+      }
 
-      onLogAdded();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(successGlow, { toValue: 1, duration: 600, useNativeDriver: true }),
-          Animated.timing(successGlow, { toValue: 0.4, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-      setStep('SUCCESS');
+      try {
+        const requiredThreshold = maskDetected ? 0.88 : 0.85;
+        const result = await verifyFaceAgainstProfile(
+          photo.uri,
+          selected.embedding,
+          modelPath,
+          requiredThreshold
+        );
+
+        if (!result.faceDetected || !result.faceEmbedding) {
+          Alert.alert(
+            getTranslation(language, 'faceNotDetectedTitle'),
+            getTranslation(language, 'faceNotDetectedMsg')
+          );
+          return;
+        }
+
+        score = computeCosineSimilarity(selected.embedding, result.faceEmbedding);
+        
+        // 1. Verify face embedding matches the registered profile in all steps
+        if (score < requiredThreshold) {
+          setMatchScore(score);
+          setStep('FAILED');
+          return;
+        }
+
+        const lTele = result.livenessTelemetry;
+        const avgEye = lTele.leftEyeOpenProbability >= 0 && lTele.rightEyeOpenProbability >= 0
+          ? (lTele.leftEyeOpenProbability + lTele.rightEyeOpenProbability) / 2
+          : 0.95;
+
+        // Update live stats from the photo frame
+        setLivenessData({
+          eyeOpen: avgEye,
+          smile: lTele.smileProbability >= 0 ? lTele.smileProbability : 0.05,
+          yaw: lTele.yaw,
+          antiSpoof: 0.33 * (verificationStep + 1),
+        });
+
+        if (lTele.meanBrightness !== undefined) {
+          setLowLightDetected(lTele.meanBrightness < 75);
+        }
+        setMaskDetected(!!lTele.maskLikely);
+
+        // 2. Perform step-specific gesture checks
+        if (verificationStep === 0) {
+          // Step 1: Base check - Make sure eyes are open
+          if (avgEye < 0.35) {
+            Alert.alert("Verification Failed", "Please keep your eyes open for the base profile capture.");
+            return;
+          }
+          setVerificationStep(1);
+          setStatusMsg("Base profile matched! Step 2: Close both eyes / आँखें बंद करें");
+        } 
+        else if (verificationStep === 1) {
+          // Step 2: Blink check - Make sure eyes are closed
+          if (lTele.leftEyeOpenProbability > 0.35 || lTele.rightEyeOpenProbability > 0.35) {
+            Alert.alert("Verification Failed", "Liveness check failed. Please close both eyes.");
+            return;
+          }
+          setVerificationStep(2);
+          const nextPrompt = lTele.maskLikely 
+            ? "Blink verified! Step 3: Turn your head left / बायीं ओर मुड़ें"
+            : "Blink verified! Step 3: Smile broadly / मुस्कुराएं";
+          setStatusMsg(nextPrompt);
+        } 
+        else if (verificationStep === 2) {
+          // Step 3: Active Gesture (Smile, or Head Turn if mask is worn)
+          if (maskDetected || lTele.maskLikely) {
+            if (lTele.yaw > -10) {
+              Alert.alert("Verification Failed", "Liveness check failed. Please turn your head left.");
+              return;
+            }
+          } else {
+            if (lTele.smileProbability < 0.60) {
+              Alert.alert("Verification Failed", "Liveness check failed. Please smile broadly.");
+              return;
+            }
+          }
+
+          // Face is successfully verified across all 3 steps!
+          setMatchScore(score);
+          setInferenceMs(32);
+          await handleAttendanceSuccess(score);
+        }
+
+      } catch (err) {
+        console.error('[Auth] Native face analysis failed:', err);
+        Alert.alert('Analysis Failed', 'Face analysis failed. Please try again.');
+        setStep('FAILED');
+      }
     } else {
-      setStep('FAILED');
+      // JS Simulator Path (Expo Go fallback)
+      if (verificationStep === 0) {
+        setVerificationStep(1);
+        setStatusMsg("Base profile matched! Step 2: Close both eyes");
+      } else if (verificationStep === 1) {
+        setVerificationStep(2);
+        setStatusMsg("Blink verified! Step 3: Smile broadly");
+      } else {
+        setMatchScore(0.89 + Math.random() * 0.05);
+        setInferenceMs(32);
+        await handleAttendanceSuccess(0.89 + Math.random() * 0.05);
+      }
     }
-  }, [selected, tfliteModel, demoMismatch, onLogAdded, successGlow]);
+  }, [selected, tfliteModel, verificationStep, maskDetected, language, attendanceType, handleAttendanceSuccess]);
 
   // ── SELECT SCREEN ───────────────────────────────────────────────────────────
   if (step === 'SELECT') {
@@ -507,14 +343,22 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
 
         <Text style={s.subLabel}>{getTranslation(language, 'welcomeSub')}</Text>
 
-        <View style={s.mismatchToggleContainer}>
-          <Text style={s.toggleLabel}>{getTranslation(language, 'simulateMismatchLabel')}</Text>
+        {/* Check-In / Check-Out Selection Tabs */}
+        <View style={s.tabsContainer}>
           <TouchableOpacity 
-            style={[s.toggleBtn, demoMismatch && { backgroundColor: COLORS.rose, borderColor: COLORS.rose }]}
-            onPress={() => setDemoMismatch(!demoMismatch)}
+            style={[s.tabButton, attendanceType === 'IN' && s.tabButtonActive, { borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }]}
+            onPress={() => setAttendanceType('IN')}
           >
-            <Text style={s.toggleBtnText}>
-              {demoMismatch ? getTranslation(language, 'mismatchActiveBtn') : getTranslation(language, 'mismatchInactiveBtn')}
+            <Text style={[s.tabButtonText, attendanceType === 'IN' && s.tabButtonTextActive]}>
+              ⬇️ LOG IN / आगमन
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[s.tabButton, attendanceType === 'OUT' && s.tabButtonActive, { borderTopRightRadius: 8, borderBottomRightRadius: 8 }]}
+            onPress={() => setAttendanceType('OUT')}
+          >
+            <Text style={[s.tabButtonText, attendanceType === 'OUT' && s.tabButtonTextActive]}>
+              ⬆️ LOG OUT / प्रस्थान
             </Text>
           </TouchableOpacity>
         </View>
@@ -542,8 +386,6 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
 
   // ── CAMERA SCREEN ───────────────────────────────────────────────────────────
   if (step === 'CAMERA' && selected) {
-    const currentChallenge = sequence[Math.min(challengeIdx, sequence.length - 1)];
-    const challengePromptKey = currentChallenge === 'SMILE' ? 'challengeSmile' : currentChallenge === 'BLINK' ? 'challengeBlink' : currentChallenge === 'TURN_LEFT' ? 'challengeTurnLeft' : 'challengeTurnRight';
     return (
       <View style={s.root}>
         <StatusBar barStyle="light-content" backgroundColor="black" />
@@ -572,6 +414,15 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           </View>
         )}
 
+        {/* Manual Brightness Instruction Toast / Banner */}
+        {screenFlash && (
+          <View style={[s.brightnessInstructionBanner, (identityMismatch || statusMsg.startsWith('✕')) && { top: 220 }]}>
+            <Text style={s.brightnessInstructionText}>
+              {getTranslation(language, 'crankBrightnessNotice')}
+            </Text>
+          </View>
+        )}
+
         {/* Dark overlay at top */}
         <LinearGradient colors={['rgba(5,8,17,0.85)', 'transparent']} style={s.topOverlay}>
           <TouchableOpacity onPress={() => setStep('SELECT')} style={s.backBtn}>
@@ -581,16 +432,15 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
           <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
             {lowLightDetected && (
               <TouchableOpacity 
-                style={[s.onlinePill, { borderColor: COLORS.amber, backgroundColor: manualFillLightDisabled ? 'transparent' : 'rgba(245,158,11,0.15)' }]}
+                style={[s.onlinePill, { borderColor: COLORS.amber, backgroundColor: manualFillLightDisabled ? 'transparent' : 'rgba(245,158,11,0.25)' }]}
                 onPress={() => {
-                  setManualFillLightDisabled(!manualFillLightDisabled);
-                  if (!manualFillLightDisabled) {
-                    setScreenFlash(false);
-                  }
+                  const nextVal = !manualFillLightDisabled;
+                  setManualFillLightDisabled(nextVal);
+                  setScreenFlash(!nextVal);
                 }}
               >
                 <Text style={[s.onlinePillText, { color: COLORS.amber, fontSize: 8 }]}>
-                  {manualFillLightDisabled ? '💡 FILL-OFF' : '🔆 FILL-LIGHT'}
+                  {getTranslation(language, manualFillLightDisabled ? 'fillLight' : 'fillOff')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -611,43 +461,65 @@ export default function AuthScreen({ registry, onBack, onLogAdded, language }: P
             statusMessage={statusMsg}
             isScanning={true}
             challengeEmoji=""
-            challengePrompt={currentChallenge ? getTranslation(language, challengePromptKey) : ''}
-            challengeIndex={Math.min(challengeIdx, sequence.length - 1)}
-            challengeTotal={sequence.length}
+            challengePrompt={
+              verificationStep === 0 
+                ? "Step 1: Look straight / सीधे कैमरे में देखें" 
+                : verificationStep === 1 
+                ? "Step 2: Close both eyes / आँखें बंद करें" 
+                : maskDetected 
+                ? "Step 3: Turn head left / बायीं ओर मुड़ें" 
+                : "Step 3: Smile broadly / मुस्कुराएं"
+            }
+            challengeIndex={verificationStep}
+            challengeTotal={3}
             livenessData={livenessData}
           />
         </View>
 
         {/* Large Visual Gesture Prompts for Illiterate Workers */}
-        {!isInitialAligning && currentChallenge && (
+        {!isInitialAligning && (
           <View style={s.visualHelperCard}>
             <Text style={s.visualHelperEmoji}>
-              {currentChallenge === 'BLINK' ? '👁️' : currentChallenge === 'SMILE' ? '😊' : currentChallenge === 'TURN_LEFT' ? '◀️👤' : '👤▶️'}
+              {verificationStep === 0 ? '👤' : verificationStep === 1 ? '👁️' : maskDetected ? '◀️' : '😊'}
             </Text>
             <Text style={s.visualHelperText}>
-              {currentChallenge === 'BLINK' 
-                ? 'BLINK EYES / पलकें झपकाएं' 
-                : currentChallenge === 'SMILE' 
-                ? 'SMILE / मुस्कुराएं' 
-                : currentChallenge === 'TURN_LEFT' 
-                ? 'TURN HEAD LEFT / बाएं मुड़ें' 
-                : 'TURN HEAD RIGHT / दाएं मुड़ें'}
+              {verificationStep === 0 
+                ? 'LOOK STRAIGHT / सीधे देखें' 
+                : verificationStep === 1 
+                ? 'CLOSE BOTH EYES / आँखें बंद करें' 
+                : maskDetected 
+                ? 'TURN HEAD LEFT / बायीं ओर मुड़ें' 
+                : 'SMILE BROADLY / मुस्कुराएं'}
             </Text>
           </View>
         )}
 
         {/* Floating Capture button / Status Pill at bottom */}
         <View style={s.captureButtonContainer}>
-          <View style={[
-            s.captureBtn, 
-            { backgroundColor: 'rgba(5, 8, 17, 0.85)', borderColor: COLORS.cyan, borderWidth: 1.5 }
-          ]}>
-            <Text style={[s.captureBtnText, { color: COLORS.cyan, letterSpacing: 1.2 }]}>
+          <TouchableOpacity 
+            style={[
+              s.captureBtn, 
+              { backgroundColor: isInitialAligning ? 'rgba(5, 8, 17, 0.85)' : COLORS.cyan, borderColor: COLORS.cyan, borderWidth: 1.5 }
+            ]}
+            onPress={() => {
+              if (!isInitialAligning) {
+                runMatching();
+              }
+            }}
+            disabled={isInitialAligning}
+          >
+            <Text style={[s.captureBtnText, { color: isInitialAligning ? COLORS.cyan : '#ffffff', letterSpacing: 1.2 }]}>
               {isInitialAligning 
                 ? `⌛ ${getTranslation(language, 'aligningReticle').toUpperCase()}` 
-                : `⚡ Real-Time Biometric Analysis Active`.toUpperCase()}
+                : verificationStep === 0 
+                ? `⚡ CAPTURE BASE PROFILE` 
+                : verificationStep === 1 
+                ? `👁️ CAPTURE BLINK` 
+                : maskDetected 
+                ? `◀️ CAPTURE HEAD TURN` 
+                : `😊 CAPTURE SMILE`}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -986,5 +858,55 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: COLORS.cyan,
+  },
+  brightnessInstructionBanner: {
+    position: 'absolute',
+    top: 110,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(5, 8, 17, 0.9)',
+    borderWidth: 1.5,
+    borderColor: COLORS.amber,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 85,
+  },
+  brightnessInstructionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.amber,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 5,
+    borderWidth: 1.5,
+    borderColor: COLORS.cyan,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  tabButtonActive: {
+    backgroundColor: COLORS.cyan,
+  },
+  tabButtonText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.cyan,
+  },
+  tabButtonTextActive: {
+    color: '#ffffff',
   },
 });

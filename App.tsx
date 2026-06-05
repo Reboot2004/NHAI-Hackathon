@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Network from 'expo-network';
 import { LocalSecureStorage } from './src/store/localDB';
 import type { EmployeeProfile } from './src/utils/faceMath';
 import type { AuthLog } from './src/store/localDB';
@@ -39,6 +40,21 @@ export default function App() {
 
   useEffect(() => {
     loadDatabase();
+  }, []);
+
+  // Dynamically track actual physical network status
+  useEffect(() => {
+    const checkNetwork = async () => {
+      try {
+        const state = await Network.getNetworkStateAsync();
+        setNetworkOnline(!!(state.isConnected && state.isInternetReachable));
+      } catch {
+        setNetworkOnline(false);
+      }
+    };
+    checkNetwork();
+    const interval = setInterval(checkNetwork, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   const refreshData = async () => {
@@ -98,7 +114,6 @@ export default function App() {
           logs={logs}
           enrolledCount={registry.length}
           networkOnline={networkOnline}
-          onToggleNetwork={() => setNetworkOnline(p => !p)}
           onBack={() => setScreen('WELCOME')}
           onRefresh={refreshData}
           language={language}

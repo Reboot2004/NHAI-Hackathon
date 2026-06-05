@@ -50,6 +50,7 @@ export interface EmployeeProfile {
   department: string;
   initials: string;
   embedding: number[];
+  syncStatus?: 'PENDING' | 'SYNCED';
 }
 
 // Registry is now fully runtime-managed.
